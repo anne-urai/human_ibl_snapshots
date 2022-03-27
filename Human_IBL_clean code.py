@@ -9,7 +9,7 @@ Created on Mon Mar  7 16:17:56 2022
 """
 Created on Mon Mar  7 16:17:56 2022
 
-@author: ann-k
+@author: ann-kay
 """
 
 ####TO DO => flip x axis of psychometric curve
