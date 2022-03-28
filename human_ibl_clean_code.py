@@ -30,11 +30,13 @@ def get_files(contents):
     # raw_csv_ling => this is like like clicking raw link in the HTML
     downloaded_files = [] #make a list
     for file_name in raw_csv_links: # loop through each CSV file link
-        downloaded_files.append((file_name,
-          urllib.request.urlopen(f"https://gitlab.pavlovia.org/{file_name}").read().decode("UTF-8"))) # read URL into a String
+        with urllib.request.urlopen(f"https://gitlab.pavlovia.org/{file_name}") as url_stream:
+            downloaded_files.append((file_name,
+              url_stream.read().decode("UTF-8"))) # read URL into a String
     return downloaded_files
 # read html code of gitlab file list
-contents = urllib.request.urlopen("https://gitlab.pavlovia.org/Anninas/human_ibl_piloting/tree/master/data").read().decode("UTF-8")
+with urllib.request.urlopen("https://gitlab.pavlovia.org/Anninas/human_ibl_piloting/tree/master/data") as url_stream:
+    contents = url_stream.read().decode("UTF-8")
 # extract file names and file contents from gitlab
 downloaded_files = get_files(contents)
 # list of individual data frames per participant

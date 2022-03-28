@@ -15,3 +15,5 @@ This experiment does not run online but you can download the psyexp file and the
 =======
 The function `behavioral_snapshots.py` requires [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting.
 >>>>>>> 6c2c4e3b87a5d8f36c03eaa83aa39e9fd4c2c11d
+
+which requires:  ONE-api and ruamel_yaml_conda
