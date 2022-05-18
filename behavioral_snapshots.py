@@ -86,55 +86,57 @@ downloaded_files = get_files(contents)
 
 # loop over file name and string content of csv 
 for file_name, file_content in downloaded_files:    
+    try:
+        fig_name = os.path.join('behavioral_snapshot_figures', file_name.split('/')[-1].replace('csv', 'png'))
+        if os.path.exists(fig_name):
+            print("skipping ", file_name, ", already exists")
+        else:
+            # type(file_content) == string
+            # parse string using CSV format into a Python Pandas Dataframe
+            data = pd.read_csv(StringIO(file_content)) #string IO pretends to be a file handle
+            print("reading in ", file_name)
+            
+            # recode some things
+            data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0})
+            
+            # ============================= %
+            # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
+            # https://github.com/int-brain-lab/IBL-pipeline/blob/7da7faf40796205f4d699b3b6d14d3bf08e81d4b/prelim_analyses/behavioral_snapshots/behavioral_snapshot.py
+            plt.close('all')
+            fig, ax = plt.subplots(ncols=3, nrows=1)
+            
+            # 1. psychometric
+            plot_psychometric(data, ax=ax[0])
+            ax[0].set(xlabel='Signed contrast', ylabel='Choice (fraction)')
+          
+            # 2. chronometric
+            sns.lineplot(data=data, ax=ax[1],
+                         x='signed_contrast', y='key_resp.rt', err_style="bars", 
+                         linewidth=1, estimator=np.median, 
+                         mew=0.5,
+                         marker='o', ci=68, color='black')
+            ax[1].set(xlabel='Signed contrast', ylabel='RT (s)', ylim=[0,2])
     
-    fig_name = os.path.join('behavioral_snapshot_figures', file_name.split('/')[-1].replace('csv', 'png'))
-    if os.path.exists(fig_name):
-        print("skipping ", file_name, ", already exists")
-    else:
-        # type(file_content) == string
-        # parse string using CSV format into a Python Pandas Dataframe
-        data = pd.read_csv(StringIO(file_content)) #string IO pretends to be a file handle
-        print("reading in ", file_name)
-        
-        # recode some things
-        data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0})
-        
-        # ============================= %
-        # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
-        # https://github.com/int-brain-lab/IBL-pipeline/blob/7da7faf40796205f4d699b3b6d14d3bf08e81d4b/prelim_analyses/behavioral_snapshots/behavioral_snapshot.py
-        plt.close('all')
-        fig, ax = plt.subplots(ncols=3, nrows=1)
-        
-        # 1. psychometric
-        plot_psychometric(data, ax=ax[0])
-        ax[0].set(xlabel='Signed contrast', ylabel='Choice (fraction)')
-      
-        # 2. chronometric
-        sns.lineplot(data=data, ax=ax[1],
-                     x='signed_contrast', y='key_resp.rt', err_style="bars", 
-                     linewidth=1, estimator=np.median, 
-                     mew=0.5,
-                     marker='o', ci=68, color='black')
-        ax[1].set(xlabel='Signed contrast', ylabel='RT (s)', ylim=[0,2])
-
-        # 4. time on task
-        sns.scatterplot(data=data, ax=ax[2], 
-                        x='trials.thisTrialN', y='key_resp.rt', 
-                        style='key_resp.corr', hue='key_resp.corr',
-                        palette={1:"#009E73", 0:"#D55E00"}, 
-                        markers={1:'o', 0:'X'}, s=10, edgecolors='face',
-                        alpha=.5, legend=False)
-        
-        # running median overlaid
-        sns.lineplot(data=data[['trials.thisTrialN', 'key_resp.rt']].rolling(10).median(), ax=ax[2],
-                     x='trials.thisTrialN', y='key_resp.rt', color='black', ci=None, )
-        ax[2].set(xlabel="Trial number", ylabel="RT (s)", ylim=[0.1, 10])
-        ax[2].set_yscale("log")
-        ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
-            ('{{:.{:1d}f}}'.format(int(np.maximum(-np.log10(y),0)))).format(y)))
-
-        fig.suptitle(file_name.split('/')[-1])
-        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-        sns.despine(trim=True)
-        fig.savefig(fig_name)
+            # 4. time on task
+            sns.scatterplot(data=data, ax=ax[2], 
+                            x='trials.thisTrialN', y='key_resp.rt', 
+                            style='key_resp.corr', hue='key_resp.corr',
+                            palette={1:"#009E73", 0:"#D55E00"}, 
+                            markers={1:'o', 0:'X'}, s=10, edgecolors='face',
+                            alpha=.5, legend=False)
+            
+            # running median overlaid
+            sns.lineplot(data=data[['trials.thisTrialN', 'key_resp.rt']].rolling(10).median(), ax=ax[2],
+                         x='trials.thisTrialN', y='key_resp.rt', color='black', ci=None, )
+            ax[2].set(xlabel="Trial number", ylabel="RT (s)", ylim=[0.1, 10])
+            ax[2].set_yscale("log")
+            ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
+                ('{{:.{:1d}f}}'.format(int(np.maximum(-np.log10(y),0)))).format(y)))
+    
+            fig.suptitle(file_name.split('/')[-1])
+            fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+            sns.despine(trim=True)
+            fig.savefig(fig_name)
+    except:
+        print("skipped file with error", file_name)
         
