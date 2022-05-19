@@ -1,11 +1,11 @@
 # Human_IBL_Task
 
+What the code does:
 This code helps to retrieve the data that is saved on git lab via Pavlovia.
 The experiment that the data is taken from can be found here: https://gitlab.pavlovia.org/Anninas/human_ibl_piloting 
 
-<<<<<<< HEAD
-To make the experiment run on your own computer you have to:
 
+To make the experiment run on your own computer you have to:
 1.Create a new folder (keep it clean)
 2.download the Human_IBL.psyexp file (https://gitlab.pavlovia.org/Anninas/human_ibl_piloting) 
 3.download the images in the folder
@@ -14,6 +14,4 @@ The immages were created using another Psychopy experiment that can be found her
 This experiment does not run online but you can download the psyexp file and the excel sheet and run it on your computer to generate new images. The images automatically have their contrast in their name. To change the contrast of the grating just change the contrasts in the excel sheet.
 =======
 The function `behavioral_snapshots.py` requires [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting.
->>>>>>> 6c2c4e3b87a5d8f36c03eaa83aa39e9fd4c2c11d
-
 which requires:  ONE-api and ruamel_yaml_conda
