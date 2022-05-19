@@ -2,16 +2,17 @@
 
 What the code does:
 This code helps to retrieve the data that is saved on git lab via Pavlovia.
-The experiment that the data is taken from can be found here: https://gitlab.pavlovia.org/Anninas/human_ibl_piloting 
+The experiment that the data is taken from can be found here: https://gitlab.pavlovia.org/Anninas/human_ibl_piloting. For more information about the experiment you can look at it's README file https://gitlab.pavlovia.org/Anninas/human_ibl_piloting/blob/master/readme.md 
+The code plots three plots for each of the participant that took the experiment and saves it in the behavioral_snapshot_figures folder
+The first plot shows the signed contrast on the x-axis and the percentage of right choices ("m") for that specific contrast on the y-axis.
+The second plot shows the signed contrast on the x-axis and the corresponding reaction time in seconds on the y axis 
+The third plot show the trail number on the x-axis and the corresponding RT in seconds on the y-axis
 
+How to use the code
+Download behavioral_snapshots.py
+Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
+Install ONE-api an ruamel_yaml_conda
 
-To make the experiment run on your own computer you have to:
-1.Create a new folder (keep it clean)
-2.download the Human_IBL.psyexp file (https://gitlab.pavlovia.org/Anninas/human_ibl_piloting) 
-3.download the images in the folder
-
-The immages were created using another Psychopy experiment that can be found here: https://gitlab.pavlovia.org/Anninas/gratings_for_ibl
-This experiment does not run online but you can download the psyexp file and the excel sheet and run it on your computer to generate new images. The images automatically have their contrast in their name. To change the contrast of the grating just change the contrasts in the excel sheet.
 =======
-The function `behavioral_snapshots.py` requires [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting.
-which requires:  ONE-api and ruamel_yaml_conda
+
+
