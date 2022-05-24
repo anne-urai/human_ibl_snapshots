@@ -8,10 +8,10 @@ The first plot shows the signed contrast on the x-axis and the percentage of rig
 The second plot shows the signed contrast on the x-axis and the corresponding reaction time in seconds on the y axis 
 The third plot show the trail number on the x-axis and the corresponding RT in seconds on the y-axis
 
-How to use the code
-Download behavioral_snapshots.py
-Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
-Install ONE-api an ruamel_yaml_conda
+How to use the code:
+- Download `behavioral_snapshots.py`
+- Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
+- Install `ONE-api` an ruamel_yaml_conda
 
 =======
 
