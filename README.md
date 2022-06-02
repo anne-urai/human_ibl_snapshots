@@ -9,8 +9,9 @@ The second plot shows the signed contrast on the x-axis and the corresponding re
 The third plot show the trail number on the x-axis and the corresponding RT in seconds on the y-axis
 
 How to use the code
-Download behavioral_snapshots.py
-Install the [brainbox](https://github.com/int-brain-lab/ibllib) Conda environment for psychometric function fitting
+Download `behavioral_snapshots.py`
+Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
+
 
 =======
 
