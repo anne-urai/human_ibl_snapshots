@@ -97,7 +97,7 @@ for file_name, file_content in downloaded_files:
             print("reading in ", file_name)
             
             # recode some things
-            data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0})
+            data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0}, na_action=np.nan)
             
             # ============================= %
             # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
@@ -119,7 +119,7 @@ for file_name, file_content in downloaded_files:
     
             # 4. time on task
             sns.scatterplot(data=data, ax=ax[2], 
-                            x='trials.thisTrialN', y='key_resp.rt', 
+                            x='trials.thisN', y='key_resp.rt', 
                             style='key_resp.corr', hue='key_resp.corr',
                             palette={1:"#009E73", 0:"#D55E00"}, 
                             markers={1:'o', 0:'X'}, s=10, edgecolors='face',
@@ -127,7 +127,7 @@ for file_name, file_content in downloaded_files:
             
             # running median overlaid
             sns.lineplot(data=data[['trials.thisTrialN', 'key_resp.rt']].rolling(10).median(), ax=ax[2],
-                         x='trials.thisTrialN', y='key_resp.rt', color='black', ci=None, )
+                         x='trials.thisN', y='key_resp.rt', color='black', ci=None, )
             ax[2].set(xlabel="Trial number", ylabel="RT (s)", ylim=[0.1, 10])
             ax[2].set_yscale("log")
             ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
@@ -137,6 +137,6 @@ for file_name, file_content in downloaded_files:
             fig.tight_layout(rect=[0, 0.03, 1, 0.95])
             sns.despine(trim=True)
             fig.savefig(fig_name)
-    except:
-        print("skipped file with error", file_name)
+    except  Exception as e:
+        print("skipped file with error", file_name, e)
         

@@ -10,8 +10,7 @@ The third plot show the trail number on the x-axis and the corresponding RT in s
 
 How to use the code
 Download behavioral_snapshots.py
-Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
-Install ONE-api an ruamel_yaml_conda
+Install the [brainbox](https://github.com/int-brain-lab/ibllib) Conda environment for psychometric function fitting
 
 =======
 
