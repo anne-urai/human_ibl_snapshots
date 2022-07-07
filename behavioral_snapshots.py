@@ -61,7 +61,7 @@ def plot_psychometric(df, **kwargs):
     # plot psychfunc
     xrange = np.max(np.abs(df['signed_contrast']))
     xlims = np.linspace(-xrange, xrange, num=100)
-    sns.lineplot(xlims,psy.erf_psycho_2gammas(pars, xlims), 
+    sns.lineplot(x=xlims, y=psy.erf_psycho_2gammas(pars, xlims), 
                  color='black', zorder=10, **kwargs)
     
     # plot datapoints on top
@@ -87,13 +87,16 @@ downloaded_files = get_files(contents)
 # loop over file name and string content of csv 
 for file_name, file_content in downloaded_files:    
     try:
-        fig_name = os.path.join('behavioral_snapshot_figures', file_name.split('/')[-1].replace('csv', 'png'))
+        fig_name = file_name.split('/')[-1].split('_202')
+        fig_name = os.path.join(os.getcwd(), 'behavioral_snapshot_figures', 
+                                '202'+ fig_name[1].split('.csv')[0] + '_' +  fig_name[0] + '.png')
+        
         if os.path.exists(fig_name):
             print("skipping ", file_name, ", already exists")
         else:
             # type(file_content) == string
             # parse string using CSV format into a Python Pandas Dataframe
-            data = pd.read_csv(StringIO(file_content)) #string IO pretends to be a file handle
+            data = pd.read_csv(StringIO(file_content)) # string IO pretends to be a file handle
             print("reading in ", file_name)
             
             # recode some things
@@ -103,7 +106,7 @@ for file_name, file_content in downloaded_files:
             # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
             # https://github.com/int-brain-lab/IBL-pipeline/blob/7da7faf40796205f4d699b3b6d14d3bf08e81d4b/prelim_analyses/behavioral_snapshots/behavioral_snapshot.py
             plt.close('all')
-            fig, ax = plt.subplots(ncols=3, nrows=1)
+            fig, ax = plt.subplots(ncols=3, nrows=1, figsize=(10,5))
             
             # 1. psychometric
             plot_psychometric(data, ax=ax[0])
@@ -126,17 +129,19 @@ for file_name, file_content in downloaded_files:
                             alpha=.5, legend=False)
             
             # running median overlaid
-            sns.lineplot(data=data[['trials.thisTrialN', 'key_resp.rt']].rolling(10).median(), ax=ax[2],
+            sns.lineplot(data=data[['trials.thisN', 'key_resp.rt']].rolling(10).median(), 
+                         ax=ax[2],
                          x='trials.thisN', y='key_resp.rt', color='black', ci=None, )
             ax[2].set(xlabel="Trial number", ylabel="RT (s)", ylim=[0.1, 10])
             ax[2].set_yscale("log")
             ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
                 ('{{:.{:1d}f}}'.format(int(np.maximum(-np.log10(y),0)))).format(y)))
     
-            fig.suptitle(file_name.split('/')[-1])
+            fig.suptitle(fig_name.split('\\')[-1])
             fig.tight_layout(rect=[0, 0.03, 1, 0.95])
             sns.despine(trim=True)
             fig.savefig(fig_name)
+            
     except  Exception as e:
         print("skipped file with error", file_name, e)
         
