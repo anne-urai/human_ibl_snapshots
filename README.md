@@ -9,8 +9,13 @@ This code helps to retrieve the data that is saved on git lab via Pavlovia.
 - The second plot shows the signed contrast on the x-axis and the corresponding reaction time in seconds on the y axis 
 - The third plot show the trail number on the x-axis and the corresponding RT in seconds on the y-axis
 
-# How to use the code
+# How to use the code for online experiment data
 - Download `behavioral_snapshots.py`
+- Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
+
+# How to use the code for offline experiment data
+- Download `offline_behavioural_snapshots.py`
+- Edit the `folder_path` in the file to match the path corresponding to your own data folder
 - Install [brainbox](https://github.com/int-brain-lab/ibllib) for psychometric function fitting
 
 By Anne Urai, Leiden University, 2022
