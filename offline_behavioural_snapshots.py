@@ -106,7 +106,7 @@ for file_name, file_content in downloaded_files:
             # recode some things
             if 'mouse.x' in data.keys(): # do this if mouse responses
                 response_mappings = pd.DataFrame({'stim_side':[1,1,0,0], 'correct':[1,0,1,0], 'response':[1,0,0,1]})
-                data['stim_side'] = data['signed_contrast'] > 0 # right stimulus = 1, left stimulus = 0
+                data['stim_side'] = data['eccentricity'] > 0 # right stimulus = 1, left stimulus = 0
                 data = data.merge(response_mappings, on=['stim_side', 'correct'], how='left') # right response = 1, left response = 0
             else: # do this if keyboard responses
                 data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0}, na_action=None)
