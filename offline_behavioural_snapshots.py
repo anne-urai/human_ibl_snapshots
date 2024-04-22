@@ -39,7 +39,7 @@ def get_files_from_folder(folder_path):
     return downloaded_files
 
 # Specify the path to the folder containing your CSV files
-folder_path = "/Users/camillaucheomaenwereuzor/Desktop/RA IBL task/offline_human_ibl/data"
+folder_path = "./data"
 # Extract file names and contents from the specified folder
 downloaded_files = get_files_from_folder(folder_path)
 
@@ -104,7 +104,12 @@ for file_name, file_content in downloaded_files:
             print("reading in ", file_name)
             
             # recode some things
-            data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0}, na_action=None)
+            if 'mouse.x' in data.keys(): # do this if mouse responses
+                response_mappings = pd.DataFrame({'stim_side':[1,1,0,0], 'correct':[1,0,1,0], 'response':[1,0,0,1]})
+                data['stim_side'] = data['signed_contrast'] > 0 # right stimulus = 1, left stimulus = 0
+                data = data.merge(response_mappings, on=['stim_side', 'correct'], how='left') # right response = 1, left response = 0
+            else: # do this if keyboard responses
+                data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0}, na_action=None)
             
             # ============================= %
             # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
@@ -118,25 +123,25 @@ for file_name, file_content in downloaded_files:
           
             # 2. chronometric
             sns.lineplot(data=data, ax=ax[1],
-                         x='signed_contrast', y='key_resp.rt', err_style="bars", 
+                         x='signed_contrast', y='reaction_time', err_style="bars", 
                          linewidth=1, estimator=np.median, 
                          mew=0.5,
                          marker='o', errorbar=('ci',68), color='black')
-            ax[1].set(xlabel='Signed contrast', ylabel='RT (s)', ylim=[0,2])
+            ax[1].set(xlabel='Signed contrast', ylabel='RT (ms)',) #ylim=[0,2])
     
             # 4. time on task
             sns.scatterplot(data=data, ax=ax[2], 
-                            x='trials.thisN', y='key_resp.rt', 
+                            x='trials.thisN', y='reaction_time', 
                             style='correct', hue='correct',
                             palette={1:"#009E73", 0:"#D55E00"}, 
                             markers={1:'o', 0:'X'}, s=10, edgecolors='face',
                             alpha=.5, legend=False)
             
             # running median overlaid
-            sns.lineplot(data=data[['trials.thisN', 'key_resp.rt']].rolling(10).median(), 
+            sns.lineplot(data=data[['trials.thisN', 'reaction_time']].rolling(10).median(), 
                          ax=ax[2],
-                         x='trials.thisN', y='key_resp.rt', color='black', errorbar=None, )
-            ax[2].set(xlabel="Trial number", ylabel="RT (s)", ylim=[0.1, 10])
+                         x='trials.thisN', y='reaction_time', color='black', errorbar=None, )
+            ax[2].set(xlabel="Trial number", ylabel="RT (ms)",) #ylim=[0.1, 10])
             ax[2].set_yscale("log")
             ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
                 ('{{:.{:1d}f}}'.format(int(np.maximum(-np.log10(y),0)))).format(y)))
