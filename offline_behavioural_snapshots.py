@@ -113,11 +113,12 @@ for file_name, file_content in downloaded_files:
             block_breaks = True if data['block_breaks'].iloc[0] == 'y' else False
 
             # drop practice trials
-            session_start_ind = np.max(np.argwhere(data['session_start'].notnull()))
+            session_start_ind = np.max(np.argwhere(data['session_start'].notnull()))+1
             data = data.iloc[session_start_ind:]
             
             # add new column that counts all trials
             data['trials.allN'] = data.reset_index().index
+            # print(f"number of trials: {data['trials.allN'].iloc[-1]}")
 
             # ============================= %
             # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
@@ -154,7 +155,7 @@ for file_name, file_content in downloaded_files:
                          ax=ax[2],
                          x='trials.allN', y='reaction_time', color='black', alpha=0.2, errorbar=None, 
                          label='median reaction time')
-            if block_breaks:
+            if block_breaks: # add lines to mark breaks
                 [plt.axvline(x, color='blue', alpha=0.2, linestyle='--') for x in np.arange(100,data['trials.allN'].iloc[-1],step=100)]
             ax[2].set(xlabel="Trial number", ylabel="RT (ms)",) #ylim=[0.1, 10])
             ax[2].set_yscale("log")
