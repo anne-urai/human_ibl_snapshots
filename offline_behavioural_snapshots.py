@@ -110,6 +110,8 @@ for file_name, file_content in downloaded_files:
             else: # do this if keyboard responses
                 data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0}, na_action=None)
 
+            block_breaks = True if data['block_breaks'].iloc[0] == 'y' else False
+
             # drop practice trials
             session_start_ind = np.max(np.argwhere(data['session_start'].notnull()))
             data = data.iloc[session_start_ind:]
@@ -135,7 +137,7 @@ for file_name, file_content in downloaded_files:
                          marker='o', errorbar=('ci',68), color='black')
             ax[1].set(xlabel='Signed contrast', ylabel='RT (ms)',) #ylim=[0,2])
     
-            # 4. time on task
+            # 3. time on task
             sns.scatterplot(data=data, ax=ax[2], 
                             x='trials.allN', y='response_time', 
                             style='correct', hue='correct',
@@ -147,11 +149,13 @@ for file_name, file_content in downloaded_files:
             sns.lineplot(data=data[['trials.allN', 'response_time']].rolling(10).median(), 
                          ax=ax[2],
                          x='trials.allN', y='response_time', color='black', errorbar=None, 
-                         label='response time')
+                         label='median response time')
             sns.lineplot(data=data[['trials.allN', 'reaction_time']].rolling(10).median(), 
                          ax=ax[2],
                          x='trials.allN', y='reaction_time', color='black', alpha=0.2, errorbar=None, 
-                         label='reaction time')
+                         label='median reaction time')
+            if block_breaks:
+                [plt.axvline(x, color='blue', alpha=0.2, linestyle='--') for x in np.arange(100,data['trials.allN'].iloc[-1],step=100)]
             ax[2].set(xlabel="Trial number", ylabel="RT (ms)",) #ylim=[0.1, 10])
             ax[2].set_yscale("log")
             ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
