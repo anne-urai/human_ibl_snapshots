@@ -41,7 +41,7 @@ def get_files_from_folder(folder_path):
 # Specify the path to the folder containing your CSV files
 folder_path = "./data"
 # Extract file names and contents from the specified folder
-downloaded_files = get_files_from_folder(folder_path)
+downloaded_files = get_files_from_folder(folder_path);
 
 
 #%% =============================== #
