@@ -1,7 +1,9 @@
-
+# This code is for the Human IBL decision-making task
+- Task code at https://github.com/cami-uche-enwe/human_IBL_cursor
+- Instructions [here](https://docs.google.com/document/d/1C6Kt_tYg0wLJQ1GE0N0mQVeitvk-i0vjs0vuYjYIJsQ/edit)
 
 # What the code does
-This code helps to retrieve the data that is saved on git lab via Pavlovia.
+This code helps to retrieve the data that is saved on git lab via Pavlovia _OR_ local files that were collected using PsychoPy
 
 - The experiment that the data is taken from can be found here: https://gitlab.pavlovia.org/Anninas/human_ibl_piloting. For more information about the experiment you can look at it's README file https://gitlab.pavlovia.org/Anninas/human_ibl_piloting/blob/master/readme.md 
 - The code plots three plots for each of the participant that took the experiment and saves it in the behavioral_snapshot_figures folder
