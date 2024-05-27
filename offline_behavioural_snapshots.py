@@ -154,7 +154,7 @@ for file_name, file_content in downloaded_files:
             sns.lineplot(data=data[['trials.allN', 'reaction_time']].rolling(10).median(), 
                          ax=ax[2],
                          x='trials.allN', y='reaction_time', color='black', alpha=0.2, errorbar=None, 
-                         label='median reaction time')
+                         label='median movement initiation time')
             if block_breaks: # add lines to mark breaks
                 [plt.axvline(x, color='blue', alpha=0.2, linestyle='--') for x in np.arange(100,data['trials.allN'].iloc[-1],step=100)]
             ax[2].set(xlabel="Trial number", ylabel="RT (ms)",) #ylim=[0.1, 10])
