@@ -111,7 +111,7 @@ for file_name, file_content in downloaded_files:
             # ============================= %
 
             cols = {0.2: 'orange', 0.5:'grey', 0.8:'purple'}
-            
+
             for gr, dat in data.groupby(['probabilityLeft']):
                 color = cols[gr[0]]
 
@@ -119,7 +119,7 @@ for file_name, file_content in downloaded_files:
                 utils.plot_psychometric(dat, color=color, ax=ax[1,0])
                 ax[1,0].set(xlabel='Signed contrast', ylabel='Choice (fraction)',
                       ylim=[-0.05, 1.05])
-          
+   
                 # 2. chronometric
                 sns.lineplot(data=dat, ax=ax[1,1],
                             x='signed_contrast', y='response_time', err_style="bars", 
