@@ -19,77 +19,16 @@ import numpy as np
 import pandas as pd
 import seaborn as sns 
 sns.set_style('darkgrid')
-
-try:
-    import psychofit as psy # https://int-brain-lab.github.io/iblenv/_autosummary/brainbox.behavior.pyschofit.html, has moved to its own package instead of brainbox
-except:
-    import brainbox.behavior.psychofit as psy
+import utils
 
 #%% =============================== #
 # get files and file contents
 # ================================= #
 
-def get_files_from_folder(folder_path):
-    # Get all files in the folder
-    files = os.listdir(folder_path)
-    # Filter only CSV files
-    csv_files = [file for file in files if file.endswith('.csv')]
-    # Create absolute paths for CSV files
-    csv_paths = [os.path.join(folder_path, file) for file in csv_files]
-    
-    downloaded_files = []
-    for csv_path in csv_paths:
-        with open(csv_path, 'r') as file:
-            file_content = file.read()
-            downloaded_files.append((csv_path, file_content))
-    # print(downloaded_files)
-    return downloaded_files
-
 # Specify the path to the folder containing your CSV files
 folder_path = "./data"
 # Extract file names and contents from the specified folder
-downloaded_files = get_files_from_folder(folder_path);
-
-#%% =============================== #
-# plotting function
-# ================================= #
-
-def plot_psychometric(df, **kwargs):
-    
-    if 'ax' in kwargs.keys():
-        ax = kwargs['ax']
-    else:
-        ax = plt.gca()
-    
-    # from https://github.com/int-brain-lab/paper-behavior/blob/master/paper_behavior_functions.py#L391
-    # summary stats - average psychfunc
-    df2 = df.groupby(['signed_contrast']).agg(count=('response', 'count'),
-                                              mean=('response', 'mean')).reset_index()    
-    # fit psychfunc
-    pars, L = psy.mle_fit_psycho(df2.transpose().values,  # extract the data from the df
-                                 P_model='erf_psycho_2gammas',
-                                 parstart=np.array(
-                                     [0, 2., 0.05, 0.05]),
-                                 parmin=np.array(
-                                     [df2['signed_contrast'].min(), 0, 0., 0.]),
-                                 parmax=np.array([df2['signed_contrast'].max(), 4., 1, 1]))
-
-    # plot psychfunc
-    xrange = np.max(np.abs(df['signed_contrast']))
-    xlims = np.linspace(-xrange, xrange, num=100)
-    sns.lineplot(x=xlims, y=psy.erf_psycho_2gammas(pars, xlims), 
-                 color='black', zorder=10, **kwargs)
-    
-    # plot datapoints on top
-    sns.lineplot(data=df, 
-                  x='signed_contrast', y='response', err_style="bars", 
-                  linewidth=0, mew=0.5, zorder=20,
-                  marker='o', errorbar=('ci',68), color='black', **kwargs)
-    
-    # paramters in title
-    ax.set_title(r'$\mu=%.2f, \sigma=%.2f, \gamma=%.2f, \lambda=%.2f$'%tuple(pars),
-              fontsize='x-small')
-
+downloaded_files = utils.get_files_from_folder(folder_path)
 
 #%% =============================== #
 # plot and save figures
@@ -110,70 +49,115 @@ for file_name, file_content in downloaded_files:
             data = pd.read_csv(StringIO(file_content)) # string IO pretends to be a file handle
             print("reading in ", file_name)
             
-            # recode some things
-            if 'mouse.x' in data.keys(): # do this if mouse responses
-                # this code merges the columns that are now spread over trials_1, trials_2, etc
-                response_mappings = pd.DataFrame({'eccentricity':[15,15,-15,-15], 'correct':[1,0,1,0], 'response':[1,0,0,1]})
-                data = data.merge(response_mappings, on=['eccentricity', 'correct'], how='left') # right response = 1, left response = 0
-            else: # do this if keyboard responses
-                data['response'] = data['key_resp.keys'].map({'x': 1, 'm': 0}, na_action=None)
-
+            # convert to ONE convention
             block_breaks = True if data['block_breaks'].iloc[0] == 'y' else False
-
-            # drop practice trials
-            session_start_ind = np.max(np.argwhere(data['session_start'].notnull()))+1
-            data = data.iloc[session_start_ind:]
-            
-            # add new column that counts all trials
-            data['trials.allN'] = data.reset_index().index
-            # print(f"number of trials: {data['trials.allN'].iloc[-1]}")
+            data = utils.convert_psychopy_one(data, file_name)
 
             # ============================= %
             # from https://github.com/int-brain-lab/IBL-pipeline/blob/master/prelim_analyses/behavioral_snapshots/behavior_plots.py
             # https://github.com/int-brain-lab/IBL-pipeline/blob/7da7faf40796205f4d699b3b6d14d3bf08e81d4b/prelim_analyses/behavioral_snapshots/behavioral_snapshot.py
+            
             plt.close('all')
-            fig, ax = plt.subplots(ncols=3, nrows=1, figsize=(10,5))
+
+            fig, ax = plt.subplots(ncols=3, nrows=2, width_ratios=[1,1,2], figsize=(12,8))
             
             # 1. psychometric
-            plot_psychometric(data, ax=ax[0])
-            ax[0].set(xlabel='Signed contrast', ylabel='Choice (fraction)',
+            utils.plot_psychometric(data, ax=ax[0,0])
+            ax[0,0].set(xlabel='Signed contrast', ylabel='Choice (fraction)',
                       ylim=[-0.05, 1.05])
           
             # 2. chronometric
-            sns.lineplot(data=data, ax=ax[1],
+            sns.lineplot(data=data, ax=ax[0,1],
                          x='signed_contrast', y='response_time', err_style="bars", 
                          linewidth=1, estimator=np.median, 
                          mew=0.5,
                          marker='o', errorbar=('ci',68), color='black')
-            sns.lineplot(data=data, ax=ax[1],
-                         x='signed_contrast', y='reaction_time', err_style="bars", 
+            sns.lineplot(data=data, ax=ax[0,1],
+                         x='signed_contrast', y='firstMovement_time', err_style="bars", 
                          linewidth=1, estimator=np.median, 
-                         mew=0.5,
-                         marker='o', errorbar=('ci',68), color='grey')
-            ax[1].set(xlabel='Signed contrast', ylabel='Reaction time (black) / movement initiation (grey) (ms)', ylim=[0, 1600])
+                         mew=0.5, alpha=0.5,
+                         marker='o', errorbar=('ci',68), color='black')
+            ax[0,1].set(xlabel='Signed contrast', ylabel='Response time (black) / movement initiation (grey) (s)', 
+                      ylim=[0, 1.6])
     
             # 3. time on task
-            sns.scatterplot(data=data, ax=ax[2], 
+            sns.scatterplot(data=data, ax=ax[0,2], 
                             x='trials.allN', y='response_time', 
-                            style='correct', hue='correct',
-                            palette={1:"#009E73", 0:"#D55E00"}, 
-                            markers={1:'o', 0:'X'}, s=10, edgecolors='face',
+                            style='feedbackType', hue='feedbackType',
+                            palette={1.:"#009E73", -1.:"#D55E00"}, 
+                            markers={1.:'o', -1.:'X'}, s=10, edgecolors='face',
                             alpha=.5, legend=False)
             
             # running median overlaid
             sns.lineplot(data=data[['trials.allN', 'response_time']].rolling(10).median(), 
-                         ax=ax[2],
+                         ax=ax[0,2],
                          x='trials.allN', y='response_time', color='black', errorbar=None)
-            sns.lineplot(data=data[['trials.allN', 'reaction_time']].rolling(10).median(), 
-                         ax=ax[2],
-                         x='trials.allN', y='reaction_time', color='grey', errorbar=None)
-            if block_breaks: # add lines to mark breaks
-                [plt.axvline(x, color='blue', alpha=0.2, linestyle='--') for x in np.arange(100,data['trials.allN'].iloc[-1],step=100)]
-            ax[2].set(xlabel="Trial number", ylabel="RT (ms)", ylim=[10, 10000])
-            ax[2].set_yscale("log")
-            ax[2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
+            
+            sns.lineplot(data=data[['trials.allN', 'firstMovement_time']].rolling(10).median(), 
+                         ax=ax[0,2],
+                         x='trials.allN', y='firstMovement_time', color='grey', errorbar=None)
+            
+            # add lines to mark breaks
+            if block_breaks: 
+                [ax[0,2].axvline(x, color='blue', alpha=0.2, linestyle='--') for x in np.arange(100,data['trials.allN'].iloc[-1],step=100)]
+            
+            ax[0,2].set(xlabel="Trial number", ylabel="RT / MiT (s)", ylim=[0.01, 10])
+            ax[0,2].set_yscale("log")
+            ax[0,2].yaxis.set_major_formatter(mpl.ticker.FuncFormatter(lambda y,pos:
                 ('{{:.{:1d}f}}'.format(int(np.maximum(-np.log10(y),0)))).format(y)))
     
+            # ============================= %
+            # BIASED BLOCKS
+            # ============================= %
+
+            cols = {0.2: 'orange', 0.5:'grey', 0.8:'purple'}
+            
+            for gr, dat in data.groupby(['probabilityLeft']):
+                color = cols[gr[0]]
+
+                # 1. psychometric
+                utils.plot_psychometric(dat, color=color, ax=ax[1,0])
+                ax[1,0].set(xlabel='Signed contrast', ylabel='Choice (fraction)',
+                      ylim=[-0.05, 1.05])
+          
+                # 2. chronometric
+                sns.lineplot(data=dat, ax=ax[1,1],
+                            x='signed_contrast', y='response_time', err_style="bars", 
+                            linewidth=1, estimator=np.median, 
+                            mew=0.5,
+                            marker='o', errorbar=('ci',68), color=color)
+                sns.lineplot(data=dat, ax=ax[1,1],
+                            x='signed_contrast', y='firstMovement_time', err_style="bars", 
+                            linewidth=1, estimator=np.median, 
+                            mew=0.5, alpha=0.5,
+                            marker='o', errorbar=('ci',68), color=color)
+                ax[1,1].set(xlabel='Signed contrast', ylabel='Response time (black) / movement initiation (grey) (s)', 
+                        ylim=[0, 1.6])
+        
+            # 3. biased blocks
+            sns.scatterplot(data=data, ax=ax[1,2], 
+                            x='trials.allN', y='probabilityLeft', 
+                            style='probabilityLeft', hue='probabilityLeft',
+                            palette=cols, 
+                            marker='o', s=10, edgecolors='face',
+                            alpha=.5, legend=False)
+            
+            # running median overlaid
+            sns.lineplot(data=data[['trials.allN', 'stimSide']].rolling(10).mean(), 
+                         ax=ax[1,2],
+                         x='trials.allN', y='stimSide', color='grey', errorbar=None)
+            
+            sns.lineplot(data=data[['trials.allN', 'choice']].rolling(10).mean(), 
+                         ax=ax[1,2],
+                         x='trials.allN', y='choice', color='black', errorbar=None)
+            
+            # add lines to mark breaks
+            if block_breaks: 
+                [plt.axvline(x, color='blue', alpha=0.2, linestyle='--') for x in np.arange(100,data['trials.allN'].iloc[-1],step=100)]
+            ax[1,2].set(xlabel="Trial number", ylabel= "Stim (grey) / choice (black)")
+
+            # ============================= %
+
             fig.suptitle(os.path.split(fig_name)[-1])
             fig.tight_layout(rect=[0, 0.03, 1, 0.95])
             sns.despine(trim=True)
