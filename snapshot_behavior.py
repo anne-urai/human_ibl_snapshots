@@ -38,7 +38,7 @@ downloaded_files = utils.get_files_from_folder(folder_path)
 for file_name, file_content in downloaded_files:    
     try:
         fig_name = file_name.split('/')[-1].split('_202')
-        fig_name = os.path.join(os.getcwd(), 'offline_snapshot_figures', 
+        fig_name = os.path.join(os.getcwd(), 'figures', 
                                 '202'+ fig_name[1].split('.csv')[0] + '_' +  fig_name[0].replace('data\\','') + '.png')
         
         if os.path.exists(fig_name):

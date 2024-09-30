@@ -16,11 +16,11 @@ except:
     import brainbox.behavior.psychofit as psy
 
 
-def get_files_from_folder(folder_path):
+def get_files_from_folder(folder_path, extension='.csv'):
     # Get all files in the folder
     files = os.listdir(folder_path)
     # Filter only CSV files
-    csv_files = [file for file in files if file.endswith('.csv')]
+    csv_files = [file for file in files if file.endswith(extension)]
     # Create absolute paths for CSV files
     csv_paths = [os.path.join(folder_path, file) for file in csv_files]
     
