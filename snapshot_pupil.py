@@ -66,7 +66,7 @@ for file_name, file_content in downloaded_files:
                             "signed_contrast -0.20": -20, "signed_contrast 0.00": 0, "signed_contrast 0.02": 2, "signed_contrast 0.05": 5,
                             "signed_contrast 0.10": 10, "signed_contrast 0.20": 20}
         events, _ = mne.events_from_annotations(raw_et, event_id=stim_events_dict)
-        epochs = mne.Epochs(interp_et, events,  tmin=-1, tmax=3, 
+        epochs = mne.Epochs(interp_et, events,  tmin=-1.5, tmax=5, 
                             baseline=(-1, 0), preload=True, reject=None)   
         stim_epochs_df = epochs.to_data_frame()
         stim_epochs_df['abs_contrast'] = np.abs(stim_epochs_df['condition'].astype(float))
@@ -79,7 +79,7 @@ for file_name, file_content in downloaded_files:
 
         feedback_events_dict = {"feedbackType 1":1, "feedbackType 0":0}
         events, _ = mne.events_from_annotations(raw_et, event_id=feedback_events_dict)
-        epochs = mne.Epochs(interp_et, events,  tmin=-1, tmax=3, baseline=None, preload=True, reject=None)   
+        epochs = mne.Epochs(interp_et, events,  tmin=-1.5, tmax=5, baseline=None, preload=True, reject=None)   
         fb_epochs_df = epochs.to_data_frame()
 
         # ================================= #
