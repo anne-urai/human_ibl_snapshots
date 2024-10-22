@@ -20,8 +20,11 @@ import utils
 
 # Specify the path to the folder containing your CSV files
 folder_path = "./data/human_pupil"
+folder_path = '/Volumes/macOS/Users/uraiae/VISUAL-DECISIONS.localized/subjects/006'
+
 # Extract file names and contents from the specified folder
 downloaded_files = utils.get_files_from_folder(folder_path, extension='.asc')
+# print(downloaded_files)
 
 #%% =============================== #
 # plot and save figures
