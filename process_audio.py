@@ -29,6 +29,7 @@ from scipy.signal import butter, filtfilt
 from matplotlib.ticker import AutoMinorLocator
 from scipy import signal
 
+from datetime import datetime
 
 def butter_lowpass(cutoff, fs, order=5):
     return butter(order, cutoff, fs=fs, btype='low', analog=False)
@@ -54,15 +55,15 @@ def run_fft(data, samplerate):
     freqs = fftfreq(n, d)[:n//2]
     return power, freqs
 
-def find_onsets(spectogram_data, onset_freq_index, power_threshold, minimum_gap):
+def find_audio_onsets(spectogram_data, onset_freq_index, power_threshold, minimum_gap):
     impulse_inds = np.where(spectogram_data[onset_freq_index,:]>power_threshold)[0]
-    onsets = [impulse_inds[0]]
+    audio_onsets = [impulse_inds[0]]
     for i,x in enumerate(impulse_inds[1:]):
         if x - impulse_inds[i] < minimum_gap:
             continue
         else:
-            onsets.append(x)
-    return np.array(onsets)
+            audio_onsets.append(x)
+    return np.array(audio_onsets)
 
 folder_path = Path('data/subjects')
 sub_names = os.listdir(folder_path)
@@ -74,9 +75,15 @@ for sub in sub_names:
 downloaded_files = utils.get_files_from_folder(data_dir)
 for file_name, file_content in downloaded_files:
     trials_data = pd.read_csv(StringIO(file_content))
-time_last_practice = trials_data[trials_data['trial_practice.stopped'].notna()]['trial_practice.stopped'].tail(1).values[0]
-start_session_time = trials_data[trials_data['start_session.started'].notna()]['start_session.started']
-end_session_time = trials_data[trials_data['start_session.stopped'].notna()]['start_session.stopped']
+exp_start_str = trials_data[trials_data['session_start'].notna()]['session_start'].unique()[0][-12:-1]
+exp_end_str = trials_data[trials_data['session_end'].notna()]['session_end'].unique()[0][-12:]
+exp_start_time = datetime.strptime(exp_start_str, '%Hh%M.%S.%f')
+exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f')
+exp_dur = (exp_end_time-exp_start_time).total_seconds()
+
+# time_last_practice = trials_data[trials_data['trial_practice.stopped'].notna()]['trial_practice.stopped'].tail(1).values[0]
+# start_session_time = trials_data[trials_data['start_session.started'].notna()]['start_session.started']
+# end_session_time = trials_data[trials_data['start_session.stopped'].notna()]['start_session.stopped']
 
 # convert to ONE convention
 trials_df = utils.convert_psychopy_one(trials_data, file_name)
@@ -84,29 +91,29 @@ n_trials = len(trials_df)
 
 vid_path = folder_path / sub / data[-1]
 audio_path = f'{str(vid_path)[:-3]}wav'
+vid_start_str = str(vid_path)[-12:-4]
+vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
+
+cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
+cutoff_end_s = cutoff_start_s + exp_dur
 
 extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
 
 # load audio
 samplerate, data = wavfile.read(audio_path)
-timepoints = np.arange(0,len(data)/samplerate,step=1/samplerate)
+
+data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
+timepoints = np.arange(0,len(data_short)/samplerate,step=1/samplerate)
 seconds = pd.to_datetime(timepoints, unit='s')
-
-plt.plot(seconds, data)
-plt.show()
-
-data_short = data[(time_last_practice*samplerate).astype(int):,0]
 
 onset_freq = 5000
 correct_freq = 2000
 timeout_freq = 567
 
 # take a segment of data
-i_start = 7*samplerate*60 # 7 minutes
-len_segment = samplerate*10 # 5 secs
-segment = data[i_start:i_start+len_segment,0]
-segment_timepoints = np.arange(i_start/samplerate,(i_start+len_segment)/samplerate,step=1/samplerate)  
-segment_seconds = pd.to_datetime(segment_timepoints, unit='s')
+len_segment = samplerate*10 # 10 secs
+segment = data_short[:len_segment]
+segment_seconds = seconds[:len_segment]
 
 # plot segment
 # coefficients = signal.cwt(segment, wavelet=signal.morlet, widths=[2])
@@ -157,29 +164,36 @@ plt.ylabel('Frequency [Hz]')
 plt.xlabel('Time [sec]')
 plt.show()
 
-# find onsets of groups
+# find audio_onsets of groups
 onset_f_ind = np.argmin(np.abs(f-onset_freq))
 other_fs = np.where(f!=f[onset_f_ind])
 other_f_ind = np.argmin(np.abs(f-onset_freq-500))
-onsets = find_onsets(Sxx, onset_f_ind, 10000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding onsets 
+audio_onsets = find_audio_onsets(Sxx, onset_f_ind, 10000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding audio_onsets 
+
+audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+# audio_onsets_seconds = audio_onsets_shifted/spectogram_samplerate
 
 # plot only power of onset frequency
 fig,ax = plt.subplots()
 plt.plot(t, Sxx[onset_f_ind,:])#-Sxx[other_f_ind,:])
-plt.vlines(t[onsets],0,np.max(Sxx[onset_f_ind,:]) ,color='k', linestyles=':')
+plt.vlines(t[audio_onsets],0,np.max(Sxx[onset_f_ind,:]) ,color='k', linestyles=':')
 plt.show()
 
 # check itis against trials table
 grating_onsets = trials_df['sound_trial_start.started'].values
-exp_duration = trials_df['trial.stopped'].tail(1) - grating_onsets[0]
+grating_onsets_shifted = grating_onsets-grating_onsets[0]
+plt.scatter(audio_onsets_shifted, grating_onsets_shifted)
+plt.show()
+
+# exp_duration = trials_df['trial.stopped'].tail(1) - grating_onsets[0]
 itis_trials = np.diff(grating_onsets)
 
-onsets_in_exp = onsets[t[onsets] > 200] # FIXME: hardcoded time where experiment starts
-first_onset = onsets_in_exp[0]
-time_from_start = t[onsets_in_exp]-t[first_onset]
-onsets_in_exp = onsets_in_exp[np.where(time_from_start < exp_duration.values)]
+audio_onsets_in_exp = audio_onsets[t[audio_onsets] > 200] # FIXME: hardcoded time where experiment starts
+first_onset = audio_onsets[0]
+time_from_start = t[audio_onsets_in_exp]-t[first_onset]
+# audio_onsets_in_exp = audio_onsets_in_exp[np.where(time_from_start < exp_duration.values)]
 spectogram_timepoints = np.arange(0,len(t)/spectogram_samplerate,step=1/spectogram_samplerate)
-itis_audio = np.diff(spectogram_timepoints[onsets_in_exp])
+itis_audio = np.diff(spectogram_timepoints[audio_onsets_in_exp])
 
 # plot histogram of itis
 plt.hist(itis_trials, range=(0,7), bins=14, alpha=0.5, color='darkseagreen', label='trials')
@@ -188,23 +202,23 @@ plt.legend()
 plt.show()
 
 fig, ax = plt.subplots()
-ax.scatter(grating_onsets, t[onsets_in_exp])
+ax.scatter(grating_onsets, t[audio_onsets_in_exp])
 ax.axline((0, 0), slope=1, linestyle=':', color='k')
 plt.show()
 
 ### repeat for correct
-# find onsets of groups
+# find audio_onsets of groups
 correct_f_ind = np.argmin(np.abs(f-correct_freq))
-onsets_correct = find_onsets(Sxx, correct_f_ind, 5000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding correct tones
+audio_onsets_correct = find_audio_onsets(Sxx, correct_f_ind, 5000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding correct tones
 
 # plot only power of onset frequency
 fig,ax = plt.subplots()
 plt.plot(t, Sxx[correct_f_ind,:])
-plt.vlines(t[onsets_correct],0,np.max(Sxx[correct_f_ind,:]) ,color='k', linestyles=':')
+plt.vlines(t[audio_onsets_correct],0,np.max(Sxx[correct_f_ind,:]) ,color='k', linestyles=':')
 plt.show()
 
 # check itis against trials table
-correct_in_exp = onsets_correct[t[onsets_correct] > 200] # FIXME: hardcoded time where experiment starts
+correct_in_exp = audio_onsets_correct[t[audio_onsets_correct] > 200] # FIXME: hardcoded time where experiment starts
 
 
 
@@ -256,15 +270,15 @@ if False:
 
     min_gap = samplerate/10 # 200ms
     impulse_inds = np.where(np.abs(coefficients)>150)[1]
-    onsets = [impulse_inds[0]]
+    audio_onsets = [impulse_inds[0]]
     for i,x in enumerate(impulse_inds[1:]):
         if x - impulse_inds[i] < min_gap:
             continue
         else:
-            onsets.append(x)
+            audio_onsets.append(x)
 
     plt.plot(segment_seconds, segment)
-    plt.scatter(segment_seconds[onsets], segment[onsets],marker='x', c='orange', s=100, zorder=3)
+    plt.scatter(segment_seconds[audio_onsets], segment[audio_onsets],marker='x', c='orange', s=100, zorder=3)
     plt.show()
 
 
