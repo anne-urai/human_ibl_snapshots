@@ -14,6 +14,7 @@ import os
 from io import StringIO
 #import h5py
 import cv2
+import mne
 
 import time
 
@@ -25,27 +26,11 @@ import utils
 from audio_extract import extract_audio
 from scipy.io import wavfile
 from scipy.fft import fft, fftfreq
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, hilbert
 from matplotlib.ticker import AutoMinorLocator
 from scipy import signal
 
-from datetime import datetime
-
-def butter_lowpass(cutoff, fs, order=5):
-    return butter(order, cutoff, fs=fs, btype='low', analog=False)
-
-def butter_highpass(cutoff, fs, order=5):
-    return butter(order, cutoff, fs=fs, btype='high', analog=False)
-
-def butter_lowpass_filter(data, cutoff, fs, order=5):
-    b, a = butter_lowpass(cutoff, fs, order=order)
-    y = filtfilt(b, a, data)
-    return y
-
-def butter_highpass_filter(data, cutoff, fs, order=5):
-    b, a = butter_highpass(cutoff, fs, order=order)
-    y = filtfilt(b, a, data)
-    return y
+from datetime import datetime, timedelta
 
 def run_fft(data, samplerate):
     d = 1/samplerate
@@ -65,101 +50,347 @@ def find_audio_onsets(spectogram_data, onset_freq_index, power_threshold, minimu
             audio_onsets.append(x)
     return np.array(audio_onsets)
 
-folder_path = Path('data/subjects')
-sub_names = os.listdir(folder_path)
-for sub in sub_names:
-    data_dir = folder_path / sub
-    data = os.listdir(data_dir)
+def detect_freq_onsets(data:np.ndarray, samplerate:float, target_freq:float, min_seconds_gap:float, power_thresh:float):
+    """
+    detect onsets at a certain frequency within timeseries data
+    """    
 
-# load trials info
-downloaded_files = utils.get_files_from_folder(data_dir)
-for file_name, file_content in downloaded_files:
-    trials_data = pd.read_csv(StringIO(file_content))
-exp_start_str = trials_data[trials_data['session_start'].notna()]['session_start'].unique()[0][-12:-1]
-exp_end_str = trials_data[trials_data['session_end'].notna()]['session_end'].unique()[0][-12:]
-exp_start_time = datetime.strptime(exp_start_str, '%Hh%M.%S.%f')
-exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f')
-exp_dur = (exp_end_time-exp_start_time).total_seconds()
+    # short time FFT
+    f, t, Sxx = signal.spectrogram(data, samplerate)
+    spectogram_samplerate = len(t)/len(data_short)*samplerate
 
-# time_last_practice = trials_data[trials_data['trial_practice.stopped'].notna()]['trial_practice.stopped'].tail(1).values[0]
-# start_session_time = trials_data[trials_data['start_session.started'].notna()]['start_session.started']
-# end_session_time = trials_data[trials_data['start_session.stopped'].notna()]['start_session.stopped']
+    # find audio_onsets of groups
+    onset_f_ind = np.argmin(np.abs(f-target_freq))
+    onsets = find_audio_onsets(Sxx, onset_f_ind, power_thresh, spectogram_samplerate*min_seconds_gap) 
 
-# convert to ONE convention
-trials_df = utils.convert_psychopy_one(trials_data, file_name)
-n_trials = len(trials_df)
+    return np.array(onsets), t
 
-vid_path = folder_path / sub / data[-1]
-audio_path = f'{str(vid_path)[:-3]}wav'
-vid_start_str = str(vid_path)[-12:-4]
-vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
+def extract_onsets(Fs, ys, ms=80, threshold=0.0225):
+    ''' Onset extraction from high SNR audio signal.
+    
+    See p368/369 (p10/11) of
+        https://www.cell.com/cms/10.1016/j.cub.2016.12.031/attachment/9fc19c51-d255-43a6-800d-2d4a993155e8/mmc1.pdf
+    '''
+    ms_gap = int(ms * (Fs/1000.0))
+    hold = float('inf')
+ 
+    # Get the power of the signal to increase SNR
+    ys = np.abs(ys)**2
+ 
+    # Get the threshold from the average of 20 highest peaks
+    sig_sorted = np.sort(np.abs(ys))
+    thresh = np.mean(sig_sorted[-20:]) * threshold
+ 
+    xs = []
+    for i, y in enumerate(np.abs(ys)):
+        if hold < ms_gap:
+            hold += 1
+            continue
+        elif hold and y > thresh:
+            hold = 0
+            xs.append(i/Fs)
+    return (xs, thresh)
 
-cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
-cutoff_end_s = cutoff_start_s + exp_dur
+def find_extra_onsets(onset_list_1, onset_list_2):
+    # compare lists
+    set_1 = set(np.round(onset_list_1))
+    set_2 = set(np.round(onset_list_2))
+    extra_set_1 = list(sorted(set_1 - set_2))
+    extra_set_2 = list(sorted(set_2 - set_1))
 
-extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
+    extra_detections = []
+    for i in extra_set_1:
+        diff = extra_set_2 - i
+        if (diff==1).any() or (diff==-1).any():
+            continue
+        else:
+            extra_detections.append(i)
 
-# load audio
-samplerate, data = wavfile.read(audio_path)
+    extra_onset_ind = [np.argmin(np.abs(audio_onsets_shifted-i)) for i in extra_detections]
 
-data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
-timepoints = np.arange(0,len(data_short)/samplerate,step=1/samplerate)
-seconds = pd.to_datetime(timepoints, unit='s')
+    return extra_onset_ind
+
+def make_mne_events_array(event_times_ms:np.ndarray, event_code):
+    return np.vstack((np.rint(event_times_ms), np.zeros_like(event_times_ms, dtype=int), np.full_like(event_times_ms, event_code))).T
+
+def hl_envelopes_idx(s, dmin=1, dmax=1, split=False):
+    """
+    Input :
+    s: 1d-array, data signal from which to extract high and low envelopes
+    dmin, dmax: int, optional, size of chunks, use this if the size of the input signal is too big
+    split: bool, optional, if True, split the signal in half along its mean, might help to generate the envelope in some cases
+    Output :
+    lmin,lmax : high/low envelope idx of input signal s
+    """
+
+    # locals min      
+    lmin = (np.diff(np.sign(np.diff(s))) > 0).nonzero()[0] + 1 
+    # locals max
+    lmax = (np.diff(np.sign(np.diff(s))) < 0).nonzero()[0] + 1 
+    
+    if split:
+        # s_mid is zero if s centered around x-axis or more generally mean of signal
+        s_mid = np.mean(s) 
+        # pre-sorting of locals min based on relative position with respect to s_mid 
+        lmin = lmin[s[lmin]<s_mid]
+        # pre-sorting of local max based on relative position with respect to s_mid 
+        lmax = lmax[s[lmax]>s_mid]
+
+    # global min of dmin-chunks of locals min 
+    lmin = lmin[[i+np.argmin(s[lmin[i:i+dmin]]) for i in range(0,len(lmin),dmin)]]
+    # global max of dmax-chunks of locals max 
+    lmax = lmax[[i+np.argmax(s[lmax[i:i+dmax]]) for i in range(0,len(lmax),dmax)]]
+    
+    return lmin,lmax
 
 onset_freq = 5000
 correct_freq = 2000
 timeout_freq = 567
+min_seconds_gap = 0.1
 
-# take a segment of data
-len_segment = samplerate*10 # 10 secs
-segment = data_short[:len_segment]
-segment_seconds = seconds[:len_segment]
+folder_path = Path('data/subjects')
+sub_names = os.listdir(folder_path)
+for sub in sub_names:
+    print(f'processing sub {sub}...')
+    data_dir = folder_path / sub
+    all_files = os.listdir(data_dir)
 
-# plot segment
-# coefficients = signal.cwt(segment, wavelet=signal.morlet, widths=[2])
-fig, ax = plt.subplots()
-ax.plot(segment_seconds, segment)
-ax.set_title('Original Signal (Time Domain)')
-ax.set_xlabel('Time [mins]')
-ax.set_ylabel('Amplitude')
-ax.margins(x=0)
+    # load trials info
+    downloaded_files = utils.get_files_from_folder(data_dir)
+    for file_name, file_content in downloaded_files:
+        trials_data = pd.read_csv(StringIO(file_content))
+
+    # convert to ONE convention
+    trials_df = utils.convert_psychopy_one(trials_data, file_name)
+    n_trials = len(trials_df)
+
+    # find time that video starts
+    vid_filename = [x for x in all_files if '.mkv' in x]
+    vid_path = folder_path / sub / vid_filename[0]
+    vid_start_str = str(vid_path)[-12:-4]
+    vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
+
+    # extract audio if not done
+    audio_path = f'{str(vid_path)[:-3]}wav'
+    if audio_path.split('\\')[-1]  not in all_files:
+        extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
+
+    # load audio
+    samplerate, data = wavfile.read(audio_path)
+    data = data.astype('float')
+
+    # find time that experiment starts
+    exp_start_str = trials_data[trials_data['session_start'].notna()]['session_start'].unique()[0][-12:-1]
+    exp_start_time = datetime.strptime(exp_start_str, '%Hh%M.%S.%f') - timedelta(seconds=5)
+    if 'session_end' in trials_df.keys():
+        exp_end_str = trials_data[trials_data['session_end'].notna()]['session_end'].unique()[0][-12:]
+        exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f') + timedelta(seconds=5)
+    else:
+        exp_end_time = exp_start_time + timedelta(minutes=np.floor(len(data)/samplerate/60))
+    exp_dur = (exp_end_time-exp_start_time).total_seconds()
+
+    # cut off unnecessary data
+    cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
+    cutoff_end_s = cutoff_start_s + exp_dur
+    data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
+
+    audio_onsets, t = detect_freq_onsets(data_short, samplerate, onset_freq, min_seconds_gap, 8000)
+    audio_onsets_relative_to_start = t[audio_onsets] + cutoff_start_s
+
+    audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+
+    grating_onsets = trials_df['sound_trial_start.started'].values
+    grating_onsets_shifted = grating_onsets-grating_onsets[0]
+
+    if len(audio_onsets) > len(grating_onsets):
+        extra_inds = find_extra_onsets(audio_onsets_shifted, grating_onsets_shifted)
+        audio_onsets = np.delete(audio_onsets, extra_inds)
+        audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+
+    # check equal number of onsets and onsets within 100ms
+    if len(grating_onsets) == len(audio_onsets):
+        print(f'success: {len(grating_onsets)} onsets detected')
+        if not np.isclose(audio_onsets_shifted, grating_onsets_shifted, atol=0.15).all():
+            print('detected onsets not within 150ms of psychopy onsets')
+        else:
+            max_offset = np.round(np.max(np.abs(audio_onsets_shifted-grating_onsets_shifted))*1000, decimals=1)
+            print(f'maximum offset between psychopy and audio is {max_offset} ms')
+    else:
+        print(f'audio {len(audio_onsets)} onsets, psychopy {len(grating_onsets)} onsets')
+
+    make_plots = True
+    if make_plots:
+        offsets = audio_onsets_shifted - grating_onsets_shifted
+        plt.scatter(range(len(offsets)), offsets*1000) 
+        plt.xlabel('trial')
+        plt.ylabel('offset (audio - psychopy) [ms]')
+        plt.show()   
+            
+        timepoints = np.arange(0, len(data_short)/samplerate, 1/samplerate)
+        seconds = pd.to_datetime(timepoints, unit='s')
+
+        len_segment_s = 60
+        len_segment_samples = samplerate*len_segment_s # 10 secs
+        segment = data_short[:len_segment_samples]
+        segment_seconds = seconds[:len_segment_samples]
+
+        correct_feedback_times = t[audio_onsets[trials_df['feedbackType']==1]] + trials_df[trials_df['feedbackType']==1]['response_time']
+        error_feedback_times = t[audio_onsets[trials_df['feedbackType']==-1]] + trials_df[trials_df['feedbackType']==-1]['response_time']
+
+        fig, ax = plt.subplots()
+        ax.plot(segment_seconds, segment)
+        ax.set_title('Original Signal (Time Domain)')
+        ax.set_xlabel('Time [secs]')
+        ax.set_ylabel('Amplitude')
+        ax.vlines(pd.to_datetime(t[audio_onsets], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
+        ax.vlines(pd.to_datetime(correct_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
+        ax.vlines(pd.to_datetime(error_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
+        ax.set_xlim(0, segment_seconds[-1])
+        ax.margins(x=0)
+        plt.show()
+
+        # convert to mne for easy epoching
+        mne_info = mne.create_info(ch_names=['audio', 'stim'], sfreq=samplerate, ch_types=['misc', 'stim'])
+        raw = mne.io.RawArray(np.vstack((data_short,np.zeros_like(data_short))), mne_info)
+        # raw_downsampled = raw.copy().resample(sfreq=5000)
+
+        onset_events = make_mne_events_array(np.rint(t[audio_onsets]*samplerate), 1)
+        correct_events = make_mne_events_array(np.rint(t[audio_onsets[trials_df['feedbackType']==1]]*samplerate+trials_df[trials_df['feedbackType']==1]['response_time']*samplerate), 2)
+        error_events = make_mne_events_array(np.rint(t[audio_onsets[trials_df['feedbackType']==-1]]*samplerate+trials_df[trials_df['feedbackType']==-1]['response_time']*samplerate), 3)
+        
+        all_events = np.vstack((onset_events, correct_events, error_events))
+        raw.add_events(all_events, stim_channel='stim')
+        events = mne.find_events(raw, stim_channel='stim')  
+        fb_event_dict = {'correct':2, 'error':3}   
+        onset_event_dict = {'onset':1}  
+        onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
+        fb_epochs = mne.Epochs(raw, events=events, event_id=fb_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
+        epochs_spec = onset_epochs.compute_tfr(picks='audio', method='morlet', freqs=np.arange(3600, 5600, 100))
+        epochs_spec.average().plot(picks='audio') 
+
+        onset_epochs_df = onset_epochs.to_data_frame()
+        sns.lineplot(onset_epochs_df.groupby(['time','condition']).mean(), x='time',y='audio')
+
+        fb_epochs_df = fb_epochs.to_data_frame()
+        sns.lineplot(fb_epochs_df.groupby(['time', 'condition']).mean(), x='time',y='audio', hue='condition', alpha=0.5)
+
+        sns.lineplot(data=fb_epochs_df, x='time', y='audio', 
+                        estimator='mean',                       
+                        err_style='band', errorbar=("pi", 50),
+                    hue='condition', legend=False, alpha=1, linewidth=2,
+                    palette=['green', 'red'], hue_order=['1','0'],)
+
+    # correct_onsets, _ = detect_freq_onsets(data_short, samplerate, correct_freq, min_seconds_gap, 5000)
+    # n_correct = (trials_df['feedbackType']==1).sum()
+    
+    # feedback_times = trials_df[trials_df['feedbackType']==1]['feedback_sound.started'].values
+    # feedback_times_shifted = feedback_times - feedback_times[0]
+
+    # correct_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+
+    # if len(correct_onsets) > len(feedback_times):
+    #     extra_inds = find_extra_onsets(correct_onsets_shifted, feedback_times_shifted)
+    #     feedback_times = np.delete(feedback_times, extra_inds)
+    #     feedback_times_shifted = t[feedback_times_shifted]-t[feedback_times_shifted[0]]
+
+    # if n_correct == len(correct_onsets):
+    #     print(f'success: {n_correct} onsets detected')
+    #     if not np.isclose(correct_onsets_shifted, feedback_times_shifted, atol=0.1).all():
+    #         print('detected onsets not within 100ms of psychopy onsets')
+    # else:
+    #     print(f'audio {len(correct_onsets)} onsets, psychopy {n_correct} onsets')
+
+timepoints = np.arange(0, len(data_short)/samplerate, 1/samplerate)
+seconds = pd.to_datetime(timepoints, unit='s')
+
+len_segment_s = 60
+len_segment_samples = samplerate*len_segment_s # 10 secs
+segment = data_short[:len_segment_samples]
+segment_seconds = seconds[:len_segment_samples]
+
+plot_segment = False
+if plot_segment:
+    fig, ax = plt.subplots()
+    ax.plot(segment_seconds, np.square(segment))
+    ax.set_title('Original Signal (Time Domain)')
+    ax.set_xlabel('Time [secs]')
+    ax.set_ylabel('Amplitude')
+    ax.vlines(pd.to_datetime(t[audio_onsets], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
+    ax.vlines(pd.to_datetime(correct_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
+    ax.vlines(pd.to_datetime(error_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
+    ax.set_xlim(0, segment_seconds[-1])
+    ax.margins(x=0)
+    plt.show()
+
+# get the threshold from the segment
+ys = np.square(data_short)
+y_sorted = np.sort(ys)
+n_onsets = len(grating_onsets_shifted[grating_onsets_shifted<len_segment_s])
+thresh = np.mean(y_sorted[-20:]) * .95
+min_gap = int(trials_df['response_time'].min()*samplerate)
+sample = np.random.choice(ys, 1_000_000, replace=False)
+plt.hist(sample)
 plt.show()
 
-# fft signal segment
-power, xf = run_fft(data_short, samplerate)
-peaks, properties = signal.find_peaks(power, prominence=12)
+# apply to the whole data
+xs=np.full_like(ys, False)
+candidates = ys > thresh
+i = 0
+while i < len(data_short):
+    if candidates[i]:
+        xs[i] = True
+        i = i + min_gap
+    else:
+        i += 1
+np.sum(xs==True)
 
-# plot power spectrum
-plt.plot(xf, power, color='blue')
-# plt.scatter(xf[peaks], power[peaks], c='orange',marker='x')
-plt.axvline(onset_freq,0,1,linestyle=':', color='deeppink') # onset
-plt.annotate('onset', (onset_freq, np.max(power)), color='deeppink')
-plt.axvline(timeout_freq,0,1,linestyle=':',color='red') # timeout
-plt.annotate('timeout', (timeout_freq, np.max(power)*0.8), color='red')
-plt.axvline(2000,0,1,linestyle=':',color='purple') # correct
-plt.annotate('correct', (correct_freq, np.max(power)*0.9), color='purple')
-plt.show()
+hold = float('inf')
+for i, y in enumerate(np.square(data_short)):
+    if hold < min_gap:
+        hold += 1
+    elif y > thresh:
+        hold = 0
+        xs.append(i/samplerate)
 
-# fft of white noise error tone
-samplerate_error, error_tone = wavfile.read('data/whitenoise.wav')
-error_power, error_freqs = run_fft(error_tone, samplerate_error)
 
-# plot power spectrum of error tone
-plt.plot(error_freqs, error_power, color='blue')
-plt.axvline(onset_freq,0,1,linestyle=':', color='deeppink') # onset
-plt.annotate('onset', (onset_freq, np.max(error_power)), color='deeppink')
-plt.axvline(timeout_freq,0,1,linestyle=':',color='red') # timeout
-plt.annotate('timeout', (timeout_freq, np.max(error_power)*0.9), color='red')
-plt.axvline(2000,0,1,linestyle=':',color='purple') # correct
-plt.annotate('correct', (correct_freq, np.max(error_power)*0.95), color='purple')
-plt.show()
+run_fft = False
+if run_fft:
+    # fft signal segment
+    power, xf = run_fft(data_short, samplerate)
+    peaks, properties = signal.find_peaks(power, prominence=12)
+
+    # plot power spectrum
+    plt.plot(xf, power, color='blue')
+    # plt.scatter(xf[peaks], power[peaks], c='orange',marker='x')
+    plt.axvline(onset_freq,0,1,linestyle=':', color='deeppink') # onset
+    plt.annotate('onset', (onset_freq, np.max(power)), color='deeppink')
+    plt.axvline(timeout_freq,0,1,linestyle=':',color='red') # timeout
+    plt.annotate('timeout', (timeout_freq, np.max(power)*0.8), color='red')
+    plt.axvline(2000,0,1,linestyle=':',color='purple') # correct
+    plt.annotate('correct', (correct_freq, np.max(power)*0.9), color='purple')
+    plt.show()
+
+# # fft of white noise error tone
+# samplerate_error, error_tone = wavfile.read('data/whitenoise.wav')
+# error_power, error_freqs = run_fft(error_tone, samplerate_error)
+
+# # plot power spectrum of error tone
+# plt.plot(error_freqs, error_power, color='blue')
+# plt.axvline(onset_freq,0,1,linestyle=':', color='deeppink') # onset
+# plt.annotate('onset', (onset_freq, np.max(error_power)), color='deeppink')
+# plt.axvline(timeout_freq,0,1,linestyle=':',color='red') # timeout
+# plt.annotate('timeout', (timeout_freq, np.max(error_power)*0.9), color='red')
+# plt.axvline(2000,0,1,linestyle=':',color='purple') # correct
+# plt.annotate('correct', (correct_freq, np.max(error_power)*0.95), color='purple')
+# plt.show()
 
 # short time FFT
 f, t, Sxx = signal.spectrogram(data_short, samplerate)
 spectogram_samplerate = len(t)/len(data_short)*samplerate
 
 # plot a segment of spectrogram
-plt.pcolormesh(t[90000:91071], f[:30], Sxx[:30,90000:91071], shading='gouraud')
+plt.pcolormesh(t[:], f[:30], Sxx[:30,:], shading='gouraud')
+plt.xlim(1350,1400)
 plt.ylabel('Frequency [Hz]')
 plt.xlabel('Time [sec]')
 plt.show()
@@ -168,46 +399,74 @@ plt.show()
 onset_f_ind = np.argmin(np.abs(f-onset_freq))
 other_fs = np.where(f!=f[onset_f_ind])
 other_f_ind = np.argmin(np.abs(f-onset_freq-500))
-audio_onsets = find_audio_onsets(Sxx, onset_f_ind, 10000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding audio_onsets 
+audio_onsets = find_audio_onsets(Sxx, onset_f_ind, 8000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding audio_onsets 
 
 audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
-# audio_onsets_seconds = audio_onsets_shifted/spectogram_samplerate
+
+grating_onsets = trials_df['sound_trial_start.started'].values
+grating_onsets_shifted = grating_onsets-grating_onsets[0]
+
+# check equal number of onsets
+assert len(grating_onsets) == len(audio_onsets), 'different number of onsets detected'
+
+# check onsets are within 100ms of each other
+assert np.isclose(audio_onsets_shifted, grating_onsets_shifted, atol=0.1).all(), 'detected onsets not within 100ms of psychopy onsets'
 
 # plot only power of onset frequency
 fig,ax = plt.subplots()
 plt.plot(t, Sxx[onset_f_ind,:])#-Sxx[other_f_ind,:])
 plt.vlines(t[audio_onsets],0,np.max(Sxx[onset_f_ind,:]) ,color='k', linestyles=':')
+plt.xlim(1350,1400)
 plt.show()
 
-# check itis against trials table
-grating_onsets = trials_df['sound_trial_start.started'].values
-grating_onsets_shifted = grating_onsets-grating_onsets[0]
+# extra_onset = 1171
+
+
+import scipy.ndimage
+import scipy.signal
+
+from ibllib.io.extractors.training_audio import welchogram, extract_sound
+detect_kwargs = {'threshold':0.8}
+tscale, fscale, W, onsets = welchogram(samplerate, data_short, detect_kwargs=detect_kwargs) # does not work
+
+# grating_idx = 0
+# audio_idx = 0
+# extra_onsets = []
+# while (audio_idx <= len(extra_audio) & grating_idx <= len(extra_grating)):
+#     if np.isclose(extra_audio[audio_idx], extra_grating[grating_idx], atol=1):
+#         grating_idx += 1
+#         audio_idx += 1
+#     else:
+#         extra_onsets.append(extra_audio[audio_idx])
+
 plt.scatter(audio_onsets_shifted, grating_onsets_shifted)
 plt.show()
 
-# exp_duration = trials_df['trial.stopped'].tail(1) - grating_onsets[0]
-itis_trials = np.diff(grating_onsets)
-
-audio_onsets_in_exp = audio_onsets[t[audio_onsets] > 200] # FIXME: hardcoded time where experiment starts
-first_onset = audio_onsets[0]
-time_from_start = t[audio_onsets_in_exp]-t[first_onset]
-# audio_onsets_in_exp = audio_onsets_in_exp[np.where(time_from_start < exp_duration.values)]
-spectogram_timepoints = np.arange(0,len(t)/spectogram_samplerate,step=1/spectogram_samplerate)
-itis_audio = np.diff(spectogram_timepoints[audio_onsets_in_exp])
+# overlay onset times
+fig,ax = plt.subplots()
+plt.vlines(audio_onsets_shifted, 0, 1, color='b', linestyles=':')
+plt.vlines(grating_onsets_shifted, 0, 1 ,color='r', linestyles=':')
+plt.xlim(100,110)
+plt.show()
 
 # plot histogram of itis
+itis_trials = np.diff(grating_onsets)
+spectogram_timepoints = np.arange(0,len(t)/spectogram_samplerate,step=1/spectogram_samplerate)
+itis_audio = np.diff(spectogram_timepoints[audio_onsets])
 plt.hist(itis_trials, range=(0,7), bins=14, alpha=0.5, color='darkseagreen', label='trials')
 plt.hist(itis_audio, range=(0,7), bins=14, alpha=0.4, color='steelblue', label='audio')
 plt.legend()
 plt.show()
 
 fig, ax = plt.subplots()
-ax.scatter(grating_onsets, t[audio_onsets_in_exp])
+ax.scatter(grating_onsets, t[audio_onsets])
 ax.axline((0, 0), slope=1, linestyle=':', color='k')
 plt.show()
 
 ### repeat for correct
 # find audio_onsets of groups
+correct_onsets, t = detect_freq_onsets(data_short, samplerate, correct_freq, 0.1, 6000)
+
 correct_f_ind = np.argmin(np.abs(f-correct_freq))
 audio_onsets_correct = find_audio_onsets(Sxx, correct_f_ind, 5000, spectogram_samplerate/10) # FIXME: hardcoded threshold for finding correct tones
 
