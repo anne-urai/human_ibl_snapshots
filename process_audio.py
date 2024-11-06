@@ -113,90 +113,76 @@ def find_extra_onsets(onset_list_1, onset_list_2):
 def make_mne_events_array(event_times_ms:np.ndarray, event_code):
     return np.vstack((np.rint(event_times_ms), np.zeros_like(event_times_ms, dtype=int), np.full_like(event_times_ms, event_code))).T
 
-onset_freq = 5000
-correct_freq = 2000
-timeout_freq = 567
-min_seconds_gap = 0.1
+def plot_snapshot_audio(data_path, folder_save, fig_name):
+        sub = data_path[-3:]
+        onset_freq = 5000
+        fig.savefig(os.path.join(folder_save, fig_name))
 
-folder_path = Path('data/subjects')
-sub_names = os.listdir(folder_path)
-for sub in sub_names:
-    print(f'processing sub {sub}...')
-    data_dir = folder_path / sub
-    all_files = os.listdir(data_dir)
+        # load trials
+        behavior_file_name = [s for s in os.listdir(os.path.join(folder_path, sub)) if s.endswith('.csv')]
+        trials_data = pd.read_csv(os.path.join(folder_path, sub, behavior_file_name[0]))
 
-    # load trials info
-    downloaded_files = utils.get_files_from_folder(data_dir)
-    for file_name, file_content in downloaded_files:
-        trials_data = pd.read_csv(StringIO(file_content))
+        # convert to ONE convention
+        trials_df = utils.convert_psychopy_one(trials_data, behavior_file_name[0])
 
-    # convert to ONE convention
-    trials_df = utils.convert_psychopy_one(trials_data, file_name)
-    n_trials = len(trials_df)
+        # find time that video starts
+        vid_filename = [x for x in all_files if '.mkv' in x]
+        vid_path = folder_path / sub / vid_filename[0]
+        vid_start_str = str(vid_path)[-12:-4]
+        vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
 
-    # find time that video starts
-    vid_filename = [x for x in all_files if '.mkv' in x]
-    vid_path = folder_path / sub / vid_filename[0]
-    vid_start_str = str(vid_path)[-12:-4]
-    vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
+        # extract audio if not done
+        audio_path = f'{str(vid_path)[:-3]}wav'
+        if audio_path.split('\\')[-1]  not in all_files:
+            extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
 
-    # extract audio if not done
-    audio_path = f'{str(vid_path)[:-3]}wav'
-    if audio_path.split('\\')[-1]  not in all_files:
-        extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
+        # load audio
+        samplerate, data = wavfile.read(audio_path)
+        data = data.astype('float')
 
-    # load audio
-    samplerate, data = wavfile.read(audio_path)
-    data = data.astype('float')
+        # find time that experiment starts
+        exp_start_str = trials_data[trials_data['session_start'].notna()]['session_start'].unique()[0][-12:-1]
+        exp_start_time = datetime.strptime(exp_start_str, '%Hh%M.%S.%f') - timedelta(seconds=5)
+        if 'session_end' in trials_df.keys():
+            exp_end_str = trials_data[trials_data['session_end'].notna()]['session_end'].unique()[0][-12:]
+            exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f') + timedelta(seconds=5)
+        else:
+            exp_end_time = exp_start_time + timedelta(minutes=np.floor(len(data)/samplerate/60))
+        exp_dur = (exp_end_time-exp_start_time).total_seconds()
 
-    # find time that experiment starts
-    exp_start_str = trials_data[trials_data['session_start'].notna()]['session_start'].unique()[0][-12:-1]
-    exp_start_time = datetime.strptime(exp_start_str, '%Hh%M.%S.%f') - timedelta(seconds=5)
-    if 'session_end' in trials_df.keys():
-        exp_end_str = trials_data[trials_data['session_end'].notna()]['session_end'].unique()[0][-12:]
-        exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f') + timedelta(seconds=5)
-    else:
-        exp_end_time = exp_start_time + timedelta(minutes=np.floor(len(data)/samplerate/60))
-    exp_dur = (exp_end_time-exp_start_time).total_seconds()
+        # cut off unnecessary data
+        cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
+        cutoff_end_s = cutoff_start_s + exp_dur
+        data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
 
-    # cut off unnecessary data
-    cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
-    cutoff_end_s = cutoff_start_s + exp_dur
-    data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
+        audio_onsets, t = detect_freq_onsets(data_short, samplerate, onset_freq, min_seconds_gap, 8000)
+        audio_onsets_relative_to_start = t[audio_onsets] + cutoff_start_s # TODO: save this
 
-    audio_onsets, t = detect_freq_onsets(data_short, samplerate, onset_freq, min_seconds_gap, 8000)
-    audio_onsets_relative_to_start = t[audio_onsets] + cutoff_start_s
-
-    audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
-
-    grating_onsets = trials_df['sound_trial_start.started'].values
-    grating_onsets_shifted = grating_onsets-grating_onsets[0]
-
-    if len(audio_onsets) > len(grating_onsets):
-        extra_inds = find_extra_onsets(audio_onsets_shifted, grating_onsets_shifted)
-        audio_onsets = np.delete(audio_onsets, extra_inds)
         audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
 
-    # check equal number of onsets and onsets within 100ms
-    if len(grating_onsets) == len(audio_onsets):
+        grating_onsets = trials_df['sound_trial_start.started'].values
+        grating_onsets_shifted = grating_onsets-grating_onsets[0]
+
+        if len(audio_onsets) > len(grating_onsets):
+            extra_inds = find_extra_onsets(audio_onsets_shifted, grating_onsets_shifted)
+            audio_onsets = np.delete(audio_onsets, extra_inds)
+            audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+
+        # check equal number of onsets and onsets within 100ms
+        assert len(grating_onsets) == len(audio_onsets), f'audio {len(audio_onsets)} onsets, psychopy {len(grating_onsets)} onsets'
         print(f'success: {len(grating_onsets)} onsets detected')
         if not np.isclose(audio_onsets_shifted, grating_onsets_shifted, atol=0.15).all():
             print('detected onsets not within 150ms of psychopy onsets')
         else:
             max_offset = np.round(np.max(np.abs(audio_onsets_shifted-grating_onsets_shifted))*1000, decimals=1)
             print(f'maximum offset between psychopy and audio is {max_offset} ms')
-    else:
-        print(f'audio {len(audio_onsets)} onsets, psychopy {len(grating_onsets)} onsets')
 
-    make_plots = True
-    if make_plots:
-            
         timepoints = np.arange(0, len(data_short)/samplerate, 1/samplerate)
         seconds = pd.to_datetime(timepoints, unit='s')
 
         len_segment_s = 60
         segment_start = 10*60*samplerate
-        len_segment_samples = samplerate*len_segment_s # 10 secs
+        len_segment_samples = samplerate*len_segment_s
         segment = data_short[segment_start:segment_start+len_segment_samples]
         segment_seconds = seconds[segment_start:segment_start+len_segment_samples]
 
@@ -219,8 +205,6 @@ for sub in sub_names:
         onset_event_dict = {'onset':1}  
         onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
         fb_epochs = mne.Epochs(raw, events=events, event_id=fb_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
-        # epochs_spec = onset_epochs.compute_tfr(picks='audio', method='morlet', freqs=np.arange(3600, 5600, 100))
-        # epochs_spec.average().plot(picks='audio') 
         onset_epochs_df = onset_epochs.to_data_frame()
         fb_epochs_df = fb_epochs.to_data_frame()
 
@@ -256,7 +240,25 @@ for sub in sub_names:
 
         fig.tight_layout(rect=[0, 0.03, 1, 0.95])
         sns.despine(trim=True)
-        plt.show()
+        fig.savefig(os.path.join(folder_save, fig_name))
+
+
+correct_freq = 2000
+timeout_freq = 567
+min_seconds_gap = 0.1
+
+folder_path = Path('data/subjects')
+sub_names = os.listdir(folder_path)
+for sub in sub_names:
+    print(f'processing sub {sub}...')
+    data_dir = folder_path / sub
+    all_files = os.listdir(data_dir)
+
+    figures_folder = os.path.join(os.getcwd(), 'figures')
+
+    plot_snapshot_audio(str(data_dir), figures_folder, sub + '_audio_snapshot.png')
+
+
     # correct_onsets, _ = detect_freq_onsets(data_short, samplerate, correct_freq, min_seconds_gap, 5000)
     # n_correct = (trials_df['feedbackType']==1).sum()
     
