@@ -26,7 +26,7 @@ import utils
 from audio_extract import extract_audio
 from scipy.io import wavfile
 from scipy.fft import fft, fftfreq
-from scipy.signal import butter, filtfilt, hilbert
+import matplotlib.dates as mdates
 from matplotlib.ticker import AutoMinorLocator
 from scipy import signal
 
@@ -113,36 +113,6 @@ def find_extra_onsets(onset_list_1, onset_list_2):
 def make_mne_events_array(event_times_ms:np.ndarray, event_code):
     return np.vstack((np.rint(event_times_ms), np.zeros_like(event_times_ms, dtype=int), np.full_like(event_times_ms, event_code))).T
 
-def hl_envelopes_idx(s, dmin=1, dmax=1, split=False):
-    """
-    Input :
-    s: 1d-array, data signal from which to extract high and low envelopes
-    dmin, dmax: int, optional, size of chunks, use this if the size of the input signal is too big
-    split: bool, optional, if True, split the signal in half along its mean, might help to generate the envelope in some cases
-    Output :
-    lmin,lmax : high/low envelope idx of input signal s
-    """
-
-    # locals min      
-    lmin = (np.diff(np.sign(np.diff(s))) > 0).nonzero()[0] + 1 
-    # locals max
-    lmax = (np.diff(np.sign(np.diff(s))) < 0).nonzero()[0] + 1 
-    
-    if split:
-        # s_mid is zero if s centered around x-axis or more generally mean of signal
-        s_mid = np.mean(s) 
-        # pre-sorting of locals min based on relative position with respect to s_mid 
-        lmin = lmin[s[lmin]<s_mid]
-        # pre-sorting of local max based on relative position with respect to s_mid 
-        lmax = lmax[s[lmax]>s_mid]
-
-    # global min of dmin-chunks of locals min 
-    lmin = lmin[[i+np.argmin(s[lmin[i:i+dmin]]) for i in range(0,len(lmin),dmin)]]
-    # global max of dmax-chunks of locals max 
-    lmax = lmax[[i+np.argmax(s[lmax[i:i+dmax]]) for i in range(0,len(lmax),dmax)]]
-    
-    return lmin,lmax
-
 onset_freq = 5000
 correct_freq = 2000
 timeout_freq = 567
@@ -220,34 +190,18 @@ for sub in sub_names:
 
     make_plots = True
     if make_plots:
-        offsets = audio_onsets_shifted - grating_onsets_shifted
-        plt.scatter(range(len(offsets)), offsets*1000) 
-        plt.xlabel('trial')
-        plt.ylabel('offset (audio - psychopy) [ms]')
-        plt.show()   
             
         timepoints = np.arange(0, len(data_short)/samplerate, 1/samplerate)
         seconds = pd.to_datetime(timepoints, unit='s')
 
         len_segment_s = 60
+        segment_start = 10*60*samplerate
         len_segment_samples = samplerate*len_segment_s # 10 secs
-        segment = data_short[:len_segment_samples]
-        segment_seconds = seconds[:len_segment_samples]
+        segment = data_short[segment_start:segment_start+len_segment_samples]
+        segment_seconds = seconds[segment_start:segment_start+len_segment_samples]
 
         correct_feedback_times = t[audio_onsets[trials_df['feedbackType']==1]] + trials_df[trials_df['feedbackType']==1]['response_time']
         error_feedback_times = t[audio_onsets[trials_df['feedbackType']==-1]] + trials_df[trials_df['feedbackType']==-1]['response_time']
-
-        fig, ax = plt.subplots()
-        ax.plot(segment_seconds, segment)
-        ax.set_title('Original Signal (Time Domain)')
-        ax.set_xlabel('Time [secs]')
-        ax.set_ylabel('Amplitude')
-        ax.vlines(pd.to_datetime(t[audio_onsets], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
-        ax.vlines(pd.to_datetime(correct_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
-        ax.vlines(pd.to_datetime(error_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
-        ax.set_xlim(0, segment_seconds[-1])
-        ax.margins(x=0)
-        plt.show()
 
         # convert to mne for easy epoching
         mne_info = mne.create_info(ch_names=['audio', 'stim'], sfreq=samplerate, ch_types=['misc', 'stim'])
@@ -265,21 +219,44 @@ for sub in sub_names:
         onset_event_dict = {'onset':1}  
         onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
         fb_epochs = mne.Epochs(raw, events=events, event_id=fb_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
-        epochs_spec = onset_epochs.compute_tfr(picks='audio', method='morlet', freqs=np.arange(3600, 5600, 100))
-        epochs_spec.average().plot(picks='audio') 
-
+        # epochs_spec = onset_epochs.compute_tfr(picks='audio', method='morlet', freqs=np.arange(3600, 5600, 100))
+        # epochs_spec.average().plot(picks='audio') 
         onset_epochs_df = onset_epochs.to_data_frame()
-        sns.lineplot(onset_epochs_df.groupby(['time','condition']).mean(), x='time',y='audio')
-
         fb_epochs_df = fb_epochs.to_data_frame()
-        sns.lineplot(fb_epochs_df.groupby(['time', 'condition']).mean(), x='time',y='audio', hue='condition', alpha=0.5)
 
-        sns.lineplot(data=fb_epochs_df, x='time', y='audio', 
-                        estimator='mean',                       
-                        err_style='band', errorbar=("pi", 50),
-                    hue='condition', legend=False, alpha=1, linewidth=2,
-                    palette=['green', 'red'], hue_order=['1','0'],)
+        sns.set_style('darkgrid')
+        fig, ax = plt.subplot_mosaic([['A','A'],['B', 'C'],['B','D'],['B','E']], height_ratios=[0.4, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
 
+        offsets = audio_onsets_shifted - grating_onsets_shifted
+        ax['B'].scatter(range(len(offsets)), offsets*1000, c='purple') 
+        ax['B'].set_xlabel('trial')
+        ax['B'].set_ylabel('offset (audio - psychopy) [ms]')   
+        
+        ax['A'].plot(segment_seconds, segment)
+        ax['A'].set_title('audio snippet')
+        ax['A'].set_xlabel('time from session start (mm:ss)')
+        ax['A'].set_ylabel('audio amplitude')
+        ax['A'].vlines(pd.to_datetime(t[audio_onsets], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
+        ax['A'].vlines(pd.to_datetime(correct_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
+        ax['A'].vlines(pd.to_datetime(error_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
+        ax['A'].set_xlim(segment_seconds[0], segment_seconds[-1])
+        ax['A'].xaxis.set_major_formatter(mdates.DateFormatter("%M:%S"))
+        ax['A'].margins(x=0)
+        ax['A'].legend()
+
+        sns.lineplot(onset_epochs_df.groupby(['time','condition']).mean(), x='time',y='audio', color='k', ax=ax['C'])
+        sns.lineplot(fb_epochs_df[fb_epochs_df['condition']=='correct'], x='time',y='audio', estimator='mean', errorbar=None, color='green', ax=ax['D'])
+        sns.lineplot(fb_epochs_df[fb_epochs_df['condition']=='error'], x='time',y='audio', estimator='mean', errorbar=None, color='red', ax=ax['E'])
+        ax['C'].set_title('locked to onset')        
+        ax['D'].set_title('locked to correct')        
+        ax['E'].set_title('locked to error')        
+        ax['C'].sharex(ax['D'])
+        ax['D'].sharex(ax['E'])
+        ax['E'].set_xlabel('time from event (s)')
+
+        fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+        sns.despine(trim=True)
+        plt.show()
     # correct_onsets, _ = detect_freq_onsets(data_short, samplerate, correct_freq, min_seconds_gap, 5000)
     # n_correct = (trials_df['feedbackType']==1).sum()
     
