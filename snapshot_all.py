@@ -35,7 +35,7 @@ elif usr == 'C:\\Users\\Philippa':
     folder_path = 'D:\winshare\workgroups\FSW\VISUAL-DECISIONS\subjects'
 else: # for local data
     folder_path = "./data/subjects"
-folder_path = "./data/subjects"
+
 figures_folder = os.path.join(os.getcwd(), 'figures') # to save
 
 # loop over all subject folders
