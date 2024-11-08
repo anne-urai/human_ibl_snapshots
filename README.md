@@ -7,6 +7,7 @@ Get yourself an environment with MNE
 - follow [these instructions](https://mne.tools/stable/install/manual_install.html#manual-install)
 
 - install [psychofit](https://pypi.org/project/Psychofit/) for psychometric function fitting, using `pip install psychofit`.
+- install `pip install audio-extract`
 
 ### Run
 ```python
