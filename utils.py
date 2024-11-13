@@ -392,23 +392,23 @@ def detect_freq_onsets(data:np.ndarray, samplerate:float, target_freq:float, min
 
     return np.array(onsets), t
 
-def find_extra_onsets(onset_list_1, onset_list_2):
-    set_1 = set(np.round(onset_list_1))
-    set_2 = set(np.round(onset_list_2))
-    extra_set_1 = list(sorted(set_1 - set_2))
-    extra_set_2 = list(sorted(set_2 - set_1))
+# def find_extra_onsets(onset_list_1, onset_list_2):
+#     set_1 = set(np.round(onset_list_1))
+#     set_2 = set(np.round(onset_list_2))
+#     extra_set_1 = list(sorted(set_1 - set_2))
+#     extra_set_2 = list(sorted(set_2 - set_1))
 
-    extra_detections = []
-    for i in extra_set_1:
-        diff = extra_set_2 - i
-        if (diff==1).any() or (diff==-1).any():
-            continue
-        else:
-            extra_detections.append(i)
+#     extra_detections = []
+#     for i in extra_set_1:
+#         diff = extra_set_2 - i
+#         if (diff==1).any() or (diff==-1).any():
+#             continue
+#         else:
+#             extra_detections.append(i)
 
-    extra_onset_ind = [np.argmin(np.abs(onset_list_1-i)) for i in extra_detections]
+#     extra_onset_ind = [np.argmin(np.abs(onset_list_1-i)) for i in extra_detections]
 
-    return extra_onset_ind
+#     return extra_onset_ind
 
 def make_mne_events_array(event_times_samples:np.ndarray, event_code):
     return np.vstack((np.rint(event_times_samples), np.zeros_like(event_times_samples, dtype=int), np.full_like(event_times_samples, event_code))).T
@@ -422,6 +422,8 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
 
     # convert to ONE convention
     trials_df = convert_psychopy_one(trials_data, behavior_file_name[0])
+    grating_onsets = trials_df['sound_trial_start.started'].values
+    grating_onsets_shifted = grating_onsets-grating_onsets[0]
 
     # find time that video starts
     vid_filename = [x for x in os.listdir(data_path) if '.mkv' in x]
@@ -431,7 +433,7 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
 
     # extract audio if not done
     audio_path = f'{str(vid_path)[:-3]}wav'
-    if audio_path.split('\\')[-1]  not in os.listdir(data_path):
+    if audio_path.split('\\')[-1] not in os.listdir(data_path):
         extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
 
     # load audio
@@ -453,21 +455,21 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
     cutoff_end_s = cutoff_start_s + exp_dur
     data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
 
-    audio_onsets, t = detect_freq_onsets(data_short, samplerate, onset_freq, 0.1, 5000)
-    audio_onsets_relative_to_start = t[audio_onsets] + cutoff_start_s # TODO: save this
+    audio_onsets_selected = []
+    threshold = 3000
+    min_gap = np.min(trials_df['response_time'])
+    while (len(audio_onsets_selected) < len(grating_onsets)) & (threshold > 500):
+        threshold -= 500
+        audio_onsets, t = detect_freq_onsets(data_short, samplerate, onset_freq, 0.1, threshold)
+        _, onset_indices = find_best_shift(t[audio_onsets], grating_onsets_shifted, (0,20), min_gap)
+        audio_onsets_selected = audio_onsets[onset_indices>-1]
 
-    audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+    audio_onsets_relative_to_start = t[audio_onsets_selected] + cutoff_start_s # TODO: save this
 
-    grating_onsets = trials_df['sound_trial_start.started'].values
-    grating_onsets_shifted = grating_onsets-grating_onsets[0]
-
-    if len(audio_onsets) > len(grating_onsets):
-        extra_inds = find_extra_onsets(audio_onsets_shifted, grating_onsets_shifted)
-        audio_onsets = np.delete(audio_onsets, extra_inds)
-        audio_onsets_shifted = t[audio_onsets]-t[audio_onsets[0]]
+    audio_onsets_shifted = t[audio_onsets_selected]-t[audio_onsets_selected[0]]
 
     # check equal number of onsets and onsets within 100ms
-    assert len(grating_onsets) == len(audio_onsets), f'audio {len(audio_onsets)} onsets, psychopy {len(grating_onsets)} onsets'
+    assert len(grating_onsets) == len(audio_onsets_selected), f'audio {len(audio_onsets_selected)} onsets, psychopy {len(grating_onsets)} onsets'
     print(f'success: {len(grating_onsets)} onsets detected')
     if not np.isclose(audio_onsets_shifted, grating_onsets_shifted, atol=0.15).all():
         print('detected onsets not within 150ms of psychopy onsets')
@@ -484,16 +486,16 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
     segment = data_short[segment_start:segment_start+len_segment_samples]
     segment_seconds = seconds[segment_start:segment_start+len_segment_samples]
 
-    correct_feedback_times = t[audio_onsets[trials_df['feedbackType']==1]] + trials_df[trials_df['feedbackType']==1]['response_time']
-    error_feedback_times = t[audio_onsets[trials_df['feedbackType']==-1]] + trials_df[trials_df['feedbackType']==-1]['response_time']
+    correct_feedback_times = t[audio_onsets_selected[trials_df['feedbackType']==1]] + trials_df[trials_df['feedbackType']==1]['response_time']
+    error_feedback_times = t[audio_onsets_selected[trials_df['feedbackType']==-1]] + trials_df[trials_df['feedbackType']==-1]['response_time']
 
     # convert to mne for easy epoching
     mne_info = mne.create_info(ch_names=['audio', 'stim'], sfreq=samplerate, ch_types=['misc', 'stim'])
     raw = mne.io.RawArray(np.vstack((data_short,np.zeros_like(data_short))), mne_info)
 
-    onset_events = make_mne_events_array(np.rint(t[audio_onsets]*samplerate), 1)
-    correct_events = make_mne_events_array(np.rint(t[audio_onsets[trials_df['feedbackType']==1]]*samplerate+trials_df[trials_df['feedbackType']==1]['response_time']*samplerate), 2)
-    error_events = make_mne_events_array(np.rint(t[audio_onsets[trials_df['feedbackType']==-1]]*samplerate+trials_df[trials_df['feedbackType']==-1]['response_time']*samplerate), 3)
+    onset_events = make_mne_events_array(np.rint(t[audio_onsets_selected]*samplerate), 1)
+    correct_events = make_mne_events_array(np.rint(t[audio_onsets_selected[trials_df['feedbackType']==1]]*samplerate+trials_df[trials_df['feedbackType']==1]['response_time']*samplerate), 2)
+    error_events = make_mne_events_array(np.rint(t[audio_onsets_selected[trials_df['feedbackType']==-1]]*samplerate+trials_df[trials_df['feedbackType']==-1]['response_time']*samplerate), 3)
     
     all_events = np.vstack((onset_events, correct_events, error_events))
     raw.add_events(all_events, stim_channel='stim')
@@ -517,7 +519,7 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
     ax['A'].set_title('audio snippet')
     ax['A'].set_xlabel('time from session start (mm:ss)')
     ax['A'].set_ylabel('audio amplitude')
-    ax['A'].vlines(pd.to_datetime(t[audio_onsets], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
+    ax['A'].vlines(pd.to_datetime(t[audio_onsets_selected], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
     ax['A'].vlines(pd.to_datetime(correct_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
     ax['A'].vlines(pd.to_datetime(error_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
     ax['A'].set_xlim(segment_seconds[0], segment_seconds[-1])
@@ -538,3 +540,25 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     sns.despine(trim=True)
     fig.savefig(os.path.join(folder_save, fig_name))
+
+
+def find_best_shift(audio_onsets, grating_onsets_shifted, shift_start_end=(0,20), delta=0.2):
+    shifts = range(shift_start_end[0], shift_start_end[1])
+    len_shifts = len(shifts)
+    len_audio_onsets = len(audio_onsets)
+    shift_errors = np.empty(len_shifts, dtype=float)
+    shift_matches = np.empty((len_shifts, len_audio_onsets), dtype=np.int64)
+
+    for j,s in enumerate(shifts):
+        shifted = audio_onsets-audio_onsets[s]
+        abs_errors = np.empty(len_audio_onsets)
+
+        for i,n in enumerate(shifted):
+            errors = np.minimum(np.square(grating_onsets_shifted-n), np.square(delta))
+            is_outlier = np.all(np.isclose(errors, np.square(delta)))
+            shift_matches[j,i] = np.argmin(errors) if not is_outlier else -1
+            abs_errors[i] = errors[shift_matches[j,i]] if not is_outlier else np.square(delta)
+
+        shift_errors[j] = np.sum(abs_errors)
+
+    return shifts[np.argmin(shift_errors)], shift_matches[np.argmin(shift_errors),:]

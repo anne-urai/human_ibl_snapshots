@@ -33,6 +33,7 @@ if usr == '/Users/uraiae': # mounted using mountainduck
     folder_path = '/Volumes/macOS/Users/uraiae/VISUAL-DECISIONS.localized/subjects/'
 elif usr == 'C:\\Users\\Philippa':
     folder_path = 'D:\winshare\workgroups\FSW\VISUAL-DECISIONS\subjects'
+    # folder_path = "./data/subjects"
 else: # for local data
     folder_path = "./data/subjects"
 
@@ -57,6 +58,7 @@ for subj in subjects:
             print("skipped subject with error", subj, e)
     else:
         continue
+
 
     if not os.path.exists(os.path.join(figures_folder, subj + '_pupil_snapshot.png')):
         try:
