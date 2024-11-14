@@ -40,7 +40,7 @@ else: # for local data
 figures_folder = os.path.join(os.getcwd(), 'figures') # to save
 
 # loop over all subject folders
-subjects = os.listdir(folder_path)
+subjects = sorted(os.listdir(folder_path))
 print(subjects)
 
 for subj in subjects:
