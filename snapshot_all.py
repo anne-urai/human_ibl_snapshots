@@ -53,12 +53,10 @@ for subj in subjects:
             data = pd.read_csv(os.path.join(folder_path, subj, behavior_file_name[0]))
             data = utils.convert_psychopy_one(data, behavior_file_name[0])
             utils.plot_snapshot_behavior(data, figures_folder, subj + '_behavior_snapshot.png')
-
         except Exception as e:
             print("skipped subject with error", subj, e)
     else:
         continue
-
 
     if not os.path.exists(os.path.join(figures_folder, subj + '_pupil_snapshot.png')):
         try:
@@ -74,7 +72,6 @@ for subj in subjects:
     if not os.path.exists(os.path.join(figures_folder, subj + '_audio_snapshot.png')):
         try:
             utils.plot_snapshot_audio(os.path.join(folder_path, subj), figures_folder, subj + '_audio_snapshot.png')
-
         except Exception as e:
             print("skipped subject with error", subj, e)
     else:
