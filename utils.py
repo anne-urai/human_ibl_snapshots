@@ -5,6 +5,7 @@ import pandas as pd
 import seaborn as sns 
 
 import os
+import shutil
 from io import StringIO
 import re
 from pathlib import Path
@@ -15,6 +16,7 @@ from scipy.io import wavfile
 from datetime import datetime, timedelta
 import matplotlib.dates as mdates
 from scipy import signal
+from moviepy.video.io.ffmpeg_tools import ffmpeg_extract_subclip
 
 # https://int-brain-lab.github.io/iblenv/_autosummary/brainbox.behavior.pyschofit.html, has moved to its own package instead of brainbox
 try:
@@ -416,29 +418,18 @@ def detect_freq_onsets(data:np.ndarray, samplerate:float, target_freq:float, min
 
     return np.array(onsets), t
 
-# def find_extra_onsets(onset_list_1, onset_list_2):
-#     set_1 = set(np.round(onset_list_1))
-#     set_2 = set(np.round(onset_list_2))
-#     extra_set_1 = list(sorted(set_1 - set_2))
-#     extra_set_2 = list(sorted(set_2 - set_1))
-
-#     extra_detections = []
-#     for i in extra_set_1:
-#         diff = extra_set_2 - i
-#         if (diff==1).any() or (diff==-1).any():
-#             continue
-#         else:
-#             extra_detections.append(i)
-
-#     extra_onset_ind = [np.argmin(np.abs(onset_list_1-i)) for i in extra_detections]
-
-#     return extra_onset_ind
-
 def make_mne_events_array(event_times_samples:np.ndarray, event_code):
     return np.vstack((np.rint(event_times_samples), np.zeros_like(event_times_samples, dtype=int), np.full_like(event_times_samples, event_code))).T
 
-def plot_snapshot_audio(data_path, folder_save, fig_name):
-    onset_freq = 5000
+def trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s):
+    if not os.path.exists(processed_path):
+        os.makedirs(processed_path)
+    short_vid_path = processed_path + 'short_' + os.path.split(vid_path)[-1]
+    if not os.path.exists(short_vid_path):
+        ffmpeg_extract_subclip(vid_path, cutoff_start_s, cutoff_end_s, targetname=short_vid_path)
+    return short_vid_path
+
+def plot_snapshot_audio(data_path, folder_save, fig_name, onset_freq = 5000):
 
     # load trials
     behavior_file_name = [s for s in os.listdir(data_path) if s.endswith('.csv')]
@@ -455,15 +446,6 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
     vid_start_str = str(vid_path)[-12:-4]
     vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
 
-    # extract audio if not done
-    audio_path = f'{str(vid_path)[:-3]}wav'
-    if audio_path.split('\\')[-1] not in os.listdir(data_path):
-        extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
-
-    # load audio
-    samplerate, data = wavfile.read(audio_path)
-    data = data.astype('float')
-
     # find time that experiment starts
     exp_start_str = trials_data[trials_data['session_start'].notna()]['session_start'].unique()[0][-12:-1]
     exp_start_time = datetime.strptime(exp_start_str, '%Hh%M.%S.%f') - timedelta(seconds=5)
@@ -471,13 +453,22 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
         exp_end_str = trials_data[trials_data['session_end'].notna()]['session_end'].unique()[0][-12:]
         exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f') + timedelta(seconds=5)
     else:
-        exp_end_time = exp_start_time + timedelta(minutes=np.floor(len(data)/samplerate/60))
+        exp_end_time = exp_start_time + timedelta(seconds=(trials_df['feedback_sound.stopped'].tail(1).values-trials_df['sound_trial_start.started'].head(1).values)[0]+10)
     exp_dur = (exp_end_time-exp_start_time).total_seconds()
-
-    # cut off unnecessary data
     cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
     cutoff_end_s = cutoff_start_s + exp_dur
-    data_short = data[int(cutoff_start_s*samplerate,):int(cutoff_end_s*samplerate),0]
+    
+    processed_path = data_path + '\processed\\'
+    short_vid_path = trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s)
+
+    # extract audio if not done
+    audio_path = f'{str(short_vid_path)[:-3]}wav'
+    if audio_path.split('\\')[-1] not in os.listdir(processed_path):
+        extract_audio(input_path=short_vid_path, output_path=audio_path, output_format='wav', overwrite=False)
+
+    # load audio
+    samplerate, data = wavfile.read(audio_path)
+    data_short = data.astype('float')[:0]
 
     audio_onsets_selected = []
     threshold = 3000
@@ -488,7 +479,8 @@ def plot_snapshot_audio(data_path, folder_save, fig_name):
         _, onset_indices = find_best_shift(t[audio_onsets], grating_onsets_shifted, (0,20), min_gap)
         audio_onsets_selected = audio_onsets[onset_indices>-1]
 
-    audio_onsets_relative_to_start = t[audio_onsets_selected] + cutoff_start_s # TODO: save this
+    audio_onsets_relative_to_start = t[audio_onsets_selected] # TODO: save this
+    np.save(processed_path + 'av_onsets', audio_onsets_relative_to_start)
 
     audio_onsets_shifted = t[audio_onsets_selected]-t[audio_onsets_selected[0]]
 
@@ -586,3 +578,221 @@ def find_best_shift(audio_onsets, grating_onsets_shifted, shift_start_end=(0,20)
         shift_errors[j] = np.sum(abs_errors)
 
     return shifts[np.argmin(shift_errors)], shift_matches[np.argmin(shift_errors),:]
+
+import imageio.v3 as iio
+from tqdm import tqdm
+import cv2
+import argparse
+from moviepy.video.io import VideoFileClip
+from moviepy.editor import VideoFileClip    
+from moviepy.video.fx import crop
+from moviepy.video.fx.all import blackwhite
+from concurrent.futures import ProcessPoolExecutor
+from multiprocessing import Pool
+
+def plot_contour(image, contours, idx):
+    approx = cv2.approxPolyDP(contours[idx], 0.02 * cv2.arcLength(contours[idx], True), True)  
+    mask = np.zeros_like(image)
+    cv2.drawContours(mask, [approx], -1, 255, -1)
+    plt.imshow(mask)
+
+def plot_frame(clip, idx):
+    plt.imshow(clip.get_frame(idx*1.0/clip.fps)[:,:,0], cmap='gray')
+
+
+def find_mirror(frame):
+
+    edges = cv2.Canny(frame,100,200)
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    for i, contour in enumerate(contours):
+        # Approximate the contour
+        approx = cv2.approxPolyDP(contour, 0.1 * cv2.arcLength(contour, True), True)  
+        # Check bounding box and aspect ratio
+        x, y, w, h = cv2.boundingRect(approx)
+        aspect_ratio = float(w) / h
+        if 0.8 < aspect_ratio < 1.2:  # Adjust as needed
+            mask = np.zeros_like(frame)
+            cv2.drawContours(mask, [approx], -1, 255, -1)
+            mean_intensity = cv2.mean(frame, mask=mask)[0]
+            _, max_intensity,_,_ = cv2.minMaxLoc(frame, mask=mask)
+            if max_intensity > 200:
+                print(i, max_intensity)
+                mirror_loc = [x,y,w,h]
+    return mirror_loc
+
+def find_mirror_2(frame):
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
+    morphed = cv2.morphologyEx(frame,cv2.MORPH_CLOSE, kernel)
+    morphed = cv2.morphologyEx(morphed, cv2.MORPH_OPEN, kernel)
+
+    edges = cv2.Canny(morphed,100,200)
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    canvas = frame.copy()
+
+    # AREA = frame.shape[0]*frame.shape[1]/20
+    for i, contour in enumerate(contours):
+        approx = cv2.approxPolyDP(contour, 0.1 * cv2.arcLength(contour, True), True)  
+        # Check bounding box and aspect ratio
+        x, y, w, h = cv2.boundingRect(approx)
+        aspect_ratio = float(w) / h
+        if 0.8 < aspect_ratio < 1.2:  # Adjust as needed
+                mask = np.zeros_like(frame)
+                cv2.drawContours(mask, [approx], -1, 255, -1)
+                mean_intensity = cv2.mean(frame, mask=mask)[0]
+                _, max_intensity,_,_ = cv2.minMaxLoc(frame, mask=mask)
+                if (max_intensity > 220) & (mean_intensity > 150):
+                    print(i, max_intensity, mean_intensity)
+                    mirror_loc = [x,y,w,h]
+    return mirror_loc
+
+from numba import jit
+
+@jit(nopython=True)
+def compute_contrast(frame):
+    f = frame[:, :, 0]
+    min_val = np.min(f)
+    max_val = np.max(f)
+    return (max_val - min_val) / (max_val + min_val)
+
+def compute_max(frame):
+    f = frame[:, :, 0]
+    return np.max(f)
+
+def process_frames(clip):
+    """
+    Function to process the frames in parallel using multiprocessing.
+    """
+    with Pool() as pool:
+        # Use Pool's map function to parallelize the contrast calculation for each frame
+        contrast_list = pool.map(compute_contrast, clip.iter_frames())
+    
+    return np.array(contrast_list)
+
+
+subj = '008'
+vid_path = os.path.join(folder_path, subj) + '\processed\\'
+
+def get_contrast_from_video(vid_path):
+
+    vid_samplerate = 60
+    # downsample audio to video, put both in mne to plot
+    # cross your fingers that the mirror never moves
+    # downsampled, events = raw.copy().resample(sfreq=vid_samplerate, events=events)
+    vid_filename = [x for x in os.listdir(vid_path) if '.mkv' in x][0]
+    onsets_filename = [x for x in os.listdir(vid_path) if '.npy' in x][0]
+    audio_onsets = np.load(vid_path + onsets_filename)
+
+    # parser = argparse.ArgumentParser()
+    # parser.add_argument('--input', type=str, help='Path to a video or a sequence of image.', default='vtest.avi')
+    # capture = cv2.VideoCapture(cv2.samples.findFileOrKeep(vid_path + vid_filename))
+
+    # # coordinates of mirror - 400:600,1400:1560
+
+    # # Check if camera opened successfully
+    # if (capture.isOpened()== False): 
+    #     print("Error opening video stream or file")
+    # total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) 
+    # print(f'Total number of frames: {total_frames}')
+    # capture.release()
+
+    clip = VideoFileClip.VideoFileClip(vid_path+vid_filename)
+    clip_bw = blackwhite(clip=clip, preserve_luminosity=True)
+    frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] 
+    x,y,w,h = find_mirror_2(frame)
+    plt.imshow(frame[y:y+w, x:x+h])
+    mirror_crop = crop.crop(clip=clip_bw, x1=x, y1=y, width=w, height=h)
+    # mirror_crop = crop.crop(clip=clip_bw, x1=1425, y1=450, x2=1525, y2=525)
+    
+    # subclip = mirror_crop.subclip(start_time=10:00, end_time=12:00)
+    # does not work
+
+    total_frames = clip.reader.nframes
+
+    plt.imshow(mirror_crop.get_frame(500*1.0/clip.fps)[:,:,0], cmap='gray') # plot 500th frame
+
+    # Initialize the empty contrast list
+    contrast_list = np.empty((total_frames, 1))
+
+    # Use ProcessPoolExecutor to parallelize the task
+    with ProcessPoolExecutor() as executor:
+        # Map each frame to the compute_contrast function
+        results = list(tqdm(executor.map(compute_contrast, mirror_crop.iter_frames()), total=total_frames))
+        # TODO: find progress bar that works
+    # Store the results into the contrast_list
+    for idx, result in enumerate(results):
+        contrast_list[idx] = result
+
+
+
+
+    contrast_list = np.empty((total_frames, 1))
+    for idx, f in enumerate(mirror_crop.iter_frames()):
+        # compute_contrast(f)
+        
+        f_bw = f[:,:,0]
+        
+        # compute min and max of Y
+        min = np.min(f_bw)
+        max = np.max(f_bw)
+
+        # compute contrast
+        contrast_list[idx] = (max-min)/(max+min)
+        if idx>500:
+            break
+
+
+
+    # contrast_list = np.empty((total_frames, 1))
+    # for idx, frame in enumerate(tqdm(iio.imiter(vid_path + vid_filename))):
+    #     mirror = frame[450:525,1425:1525,:]
+    #     mirror_bw = cv2.cvtColor(mirror, cv2.COLOR_BGR2YUV)[:,:,0]
+
+    #     # compute min and max of Y
+    #     min = np.min(mirror_bw)
+    #     max = np.max(mirror_bw)
+
+    #     # compute contrast
+    #     contrast = (max-min)/(max+min)
+    #     contrast_list[idx] = contrast
+
+    #     if idx == 1000:
+    #         break
+
+    frame = iio.imread(vid_path, index=30200)
+    plt.imshow(frame)
+    plt.imshow(frame[400:600, 1400:1560])
+    plt.imshow(cv2.cvtColor(frame[450:580, 1430:1530], cv2.COLOR_BGR2YUV)[:,:,0])
+    plt.show()
+
+    plt.plot(contrast_list)
+    plt.ylim(0,.5)
+    plt.xlabel('video frame')
+    plt.ylabel('contrast')
+    plt.show()
+
+    dst = cv2.cornerHarris(cv2.cvtColor(mirror, cv2.COLOR_BGR2YUV)[:,:,0],2,3,0.04)
+    dst = cv2.dilate(dst,None)
+
+    corners = mirror.copy()
+    corners[dst>0.01*dst.max()]=[0,0,255]
+    cv2.imshow('dst',corners)
+
+    edges = cv2.Canny(frame,100,200)
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] # make sure this is bw
+
+
+
+
+    plt.subplot(121),plt.imshow(frame,cmap = 'gray')
+    plt.title('Original Image'), plt.xticks([]), plt.yticks([])
+    plt.subplot(122),plt.imshow(edges,cmap = 'gray')
+    plt.title('Edge Image'), plt.xticks([]), plt.yticks([])
+
+    plt.show()
