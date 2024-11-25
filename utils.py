@@ -479,7 +479,7 @@ def plot_snapshot_audio(data_path, folder_save, fig_name, onset_freq = 5000):
         _, onset_indices = find_best_shift(t[audio_onsets], grating_onsets_shifted, (0,20), min_gap)
         audio_onsets_selected = audio_onsets[onset_indices>-1]
 
-    audio_onsets_relative_to_start = t[audio_onsets_selected] # TODO: save this
+    audio_onsets_relative_to_start = t[audio_onsets_selected]
     np.save(processed_path + 'av_onsets', audio_onsets_relative_to_start)
 
     audio_onsets_shifted = t[audio_onsets_selected]-t[audio_onsets_selected[0]]
@@ -599,41 +599,13 @@ def plot_contour(image, contours, idx):
 def plot_frame(clip, idx):
     plt.imshow(clip.get_frame(idx*1.0/clip.fps)[:,:,0], cmap='gray')
 
-
 def find_mirror(frame):
-
-    edges = cv2.Canny(frame,100,200)
-    # Find contours
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    for i, contour in enumerate(contours):
-        # Approximate the contour
-        approx = cv2.approxPolyDP(contour, 0.1 * cv2.arcLength(contour, True), True)  
-        # Check bounding box and aspect ratio
-        x, y, w, h = cv2.boundingRect(approx)
-        aspect_ratio = float(w) / h
-        if 0.8 < aspect_ratio < 1.2:  # Adjust as needed
-            mask = np.zeros_like(frame)
-            cv2.drawContours(mask, [approx], -1, 255, -1)
-            mean_intensity = cv2.mean(frame, mask=mask)[0]
-            _, max_intensity,_,_ = cv2.minMaxLoc(frame, mask=mask)
-            if max_intensity > 200:
-                print(i, max_intensity)
-                mirror_loc = [x,y,w,h]
-    return mirror_loc
-
-def find_mirror_2(frame):
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (5,5))
     morphed = cv2.morphologyEx(frame,cv2.MORPH_CLOSE, kernel)
     morphed = cv2.morphologyEx(morphed, cv2.MORPH_OPEN, kernel)
-
     edges = cv2.Canny(morphed,100,200)
-    # Find contours
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    canvas = frame.copy()
-
-    # AREA = frame.shape[0]*frame.shape[1]/20
     for i, contour in enumerate(contours):
         approx = cv2.approxPolyDP(contour, 0.1 * cv2.arcLength(contour, True), True)  
         # Check bounding box and aspect ratio
@@ -649,9 +621,6 @@ def find_mirror_2(frame):
                     mirror_loc = [x,y,w,h]
     return mirror_loc
 
-from numba import jit
-
-@jit(nopython=True)
 def compute_contrast(frame):
     f = frame[:, :, 0]
     min_val = np.min(f)
@@ -672,52 +641,30 @@ def process_frames(clip):
     
     return np.array(contrast_list)
 
-
 subj = '008'
-vid_path = os.path.join(folder_path, subj) + '\processed\\'
+data_path = os.path.join(folder_path, subj)
 
-def get_contrast_from_video(vid_path):
-
-    vid_samplerate = 60
-    # downsample audio to video, put both in mne to plot
-    # cross your fingers that the mirror never moves
-    # downsampled, events = raw.copy().resample(sfreq=vid_samplerate, events=events)
+def get_contrast_from_video(data_path):
+    vid_path = data_path + '\processed\\'
     vid_filename = [x for x in os.listdir(vid_path) if '.mkv' in x][0]
     onsets_filename = [x for x in os.listdir(vid_path) if '.npy' in x][0]
     audio_onsets = np.load(vid_path + onsets_filename)
 
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument('--input', type=str, help='Path to a video or a sequence of image.', default='vtest.avi')
-    # capture = cv2.VideoCapture(cv2.samples.findFileOrKeep(vid_path + vid_filename))
-
-    # # coordinates of mirror - 400:600,1400:1560
-
-    # # Check if camera opened successfully
-    # if (capture.isOpened()== False): 
-    #     print("Error opening video stream or file")
-    # total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT)) 
-    # print(f'Total number of frames: {total_frames}')
-    # capture.release()
-
     clip = VideoFileClip.VideoFileClip(vid_path+vid_filename)
     clip_bw = blackwhite(clip=clip, preserve_luminosity=True)
     frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] 
-    x,y,w,h = find_mirror_2(frame)
+    x,y,w,h = find_mirror(frame)
     plt.imshow(frame[y:y+w, x:x+h])
     mirror_crop = crop.crop(clip=clip_bw, x1=x, y1=y, width=w, height=h)
-    # mirror_crop = crop.crop(clip=clip_bw, x1=1425, y1=450, x2=1525, y2=525)
-    
-    # subclip = mirror_crop.subclip(start_time=10:00, end_time=12:00)
-    # does not work
 
+    # get some info from video
+    vid_samplerate = clip.fps
     total_frames = clip.reader.nframes
 
     plt.imshow(mirror_crop.get_frame(500*1.0/clip.fps)[:,:,0], cmap='gray') # plot 500th frame
 
-    # Initialize the empty contrast list
-    contrast_list = np.empty((total_frames, 1))
-
     # Use ProcessPoolExecutor to parallelize the task
+    contrast_list = np.empty((total_frames, 1))
     with ProcessPoolExecutor() as executor:
         # Map each frame to the compute_contrast function
         results = list(tqdm(executor.map(compute_contrast, mirror_crop.iter_frames()), total=total_frames))
@@ -726,73 +673,76 @@ def get_contrast_from_video(vid_path):
     for idx, result in enumerate(results):
         contrast_list[idx] = result
 
-
-
-
     contrast_list = np.empty((total_frames, 1))
+    f = np.empty((w,h))
     for idx, f in enumerate(mirror_crop.iter_frames()):
         # compute_contrast(f)
-        
         f_bw = f[:,:,0]
-        
         # compute min and max of Y
         min = np.min(f_bw)
         max = np.max(f_bw)
-
         # compute contrast
         contrast_list[idx] = (max-min)/(max+min)
         if idx>500:
             break
 
+    for idx in range(total_frames): # is this faster?
+        f_bw = mirror_crop.get_frame(idx*1.0/clip.fps)[:,:,0]
+        # compute min and max of Y
+        min = np.min(f_bw)
+        max = np.max(f_bw)
+        # compute contrast
+        contrast_list[idx] = (max-min)/(max+min)
+        if idx>500:
+            break
 
+    # find contrast for frames where onsets should be happening
+    epoch_start = -0.15
+    epoch_end = 0.1
+    contrast_epochs = np.empty((len(audio_onsets), len(np.arange(epoch_start, epoch_end, step=1/clip.fps))+1))
+    for i,o in enumerate(audio_onsets[:10]):
+        print(i)
+        for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/clip.fps)):
+            f = mirror_crop.get_frame(t)
+            contrast_epochs[i,j] = compute_max(f)
+    
+    plt.plot(np.arange(epoch_start, epoch_end, step=1/clip.fps), contrast_epochs[:10,:24].T-contrast_epochs[:10,0].T)
 
-    # contrast_list = np.empty((total_frames, 1))
-    # for idx, frame in enumerate(tqdm(iio.imiter(vid_path + vid_filename))):
-    #     mirror = frame[450:525,1425:1525,:]
-    #     mirror_bw = cv2.cvtColor(mirror, cv2.COLOR_BGR2YUV)[:,:,0]
+    # do the same thing but use the grating onsets - this is better
+    # load trials
+    behavior_file_name = [s for s in os.listdir(data_path) if s.endswith('.csv')]
+    trials_data = pd.read_csv(os.path.join(data_path, behavior_file_name[0]))
 
-    #     # compute min and max of Y
-    #     min = np.min(mirror_bw)
-    #     max = np.max(mirror_bw)
+    # convert to ONE convention
+    trials_df = convert_psychopy_one(trials_data, behavior_file_name[0])
+    grating_onsets = trials_df['grating_l.started'].values # sound_trial_start.started
+    grating_onsets_shifted = grating_onsets-grating_onsets[0]
+    onsets_shifted = grating_onsets_shifted + audio_onsets[0]
 
-    #     # compute contrast
-    #     contrast = (max-min)/(max+min)
-    #     contrast_list[idx] = contrast
-
-    #     if idx == 1000:
-    #         break
-
-    frame = iio.imread(vid_path, index=30200)
-    plt.imshow(frame)
-    plt.imshow(frame[400:600, 1400:1560])
-    plt.imshow(cv2.cvtColor(frame[450:580, 1430:1530], cv2.COLOR_BGR2YUV)[:,:,0])
-    plt.show()
-
-    plt.plot(contrast_list)
-    plt.ylim(0,.5)
-    plt.xlabel('video frame')
-    plt.ylabel('contrast')
-    plt.show()
-
-    dst = cv2.cornerHarris(cv2.cvtColor(mirror, cv2.COLOR_BGR2YUV)[:,:,0],2,3,0.04)
-    dst = cv2.dilate(dst,None)
-
-    corners = mirror.copy()
-    corners[dst>0.01*dst.max()]=[0,0,255]
-    cv2.imshow('dst',corners)
-
-    edges = cv2.Canny(frame,100,200)
-    # Find contours
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] # make sure this is bw
-
+    contrast_epochs = np.empty((len(audio_onsets), len(np.arange(epoch_start, epoch_end, step=1/clip.fps))+1))
+    for i,o in enumerate(onsets_shifted[:10]):
+        print(i)
+        for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/clip.fps)):
+            f = mirror_crop.get_frame(t)
+            contrast_epochs[i,j] = compute_max(f)
+    
+    plt.plot(np.arange(epoch_start, epoch_end, step=1/clip.fps), contrast_epochs[:10,:24].T-contrast_epochs[:10,0].T)
 
 
 
-    plt.subplot(121),plt.imshow(frame,cmap = 'gray')
-    plt.title('Original Image'), plt.xticks([]), plt.yticks([])
-    plt.subplot(122),plt.imshow(edges,cmap = 'gray')
-    plt.title('Edge Image'), plt.xticks([]), plt.yticks([])
+    if False: # some plotting stuff
+        edges = cv2.Canny(frame,100,200)
+        # Find contours
+        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    plt.show()
+        frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] # make sure this is bw
+
+
+
+
+        plt.subplot(121),plt.imshow(frame,cmap = 'gray')
+        plt.title('Original Image'), plt.xticks([]), plt.yticks([])
+        plt.subplot(122),plt.imshow(edges,cmap = 'gray')
+        plt.title('Edge Image'), plt.xticks([]), plt.yticks([])
+
+        plt.show()
