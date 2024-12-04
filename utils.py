@@ -468,7 +468,7 @@ def plot_snapshot_audio(data_path, folder_save, fig_name, onset_freq = 5000):
 
     # load audio
     samplerate, data = wavfile.read(audio_path)
-    data_short = data.astype('float')[:0]
+    data_short = data.astype('float')[:,0]
 
     audio_onsets_selected = []
     threshold = 3000
@@ -583,12 +583,13 @@ import imageio.v3 as iio
 from tqdm import tqdm
 import cv2
 import argparse
-from moviepy.video.io import VideoFileClip
-from moviepy.editor import VideoFileClip    
+# from moviepy.video.io import VideoFileClip
+# from moviepy.editor import VideoFileClip    
+import moviepy.editor as mpy
 from moviepy.video.fx import crop
 from moviepy.video.fx.all import blackwhite
 from concurrent.futures import ProcessPoolExecutor
-from multiprocessing import Pool
+from multiprocessing import Pool, cpu_count
 
 def plot_contour(image, contours, idx):
     approx = cv2.approxPolyDP(contours[idx], 0.02 * cv2.arcLength(contours[idx], True), True)  
@@ -622,53 +623,182 @@ def find_mirror(frame):
     return mirror_loc
 
 def compute_contrast(frame):
-    f = frame[:, :, 0]
-    min_val = np.min(f)
-    max_val = np.max(f)
+    min_val = np.min(frame)
+    max_val = np.max(frame)
     return (max_val - min_val) / (max_val + min_val)
 
 def compute_max(frame):
     f = frame[:, :, 0]
     return np.max(f)
 
-def process_frames(clip):
-    """
-    Function to process the frames in parallel using multiprocessing.
-    """
-    with Pool() as pool:
-        # Use Pool's map function to parallelize the contrast calculation for each frame
-        contrast_list = pool.map(compute_contrast, clip.iter_frames())
+# def process_frames(clip):
+#     """
+#     Function to process the frames in parallel using multiprocessing.
+#     """
+#     with Pool() as pool:
+#         # Use Pool's map function to parallelize the contrast calculation for each frame
+#         contrast_list = pool.map(compute_contrast, clip.iter_frames())
     
-    return np.array(contrast_list)
+#     return np.array(contrast_list)
+
+
+from concurrent.futures import ThreadPoolExecutor
+
+def process_frame(frame):
+    # Find maximum brightness without grayscale conversion
+    return frame.max()
+
+def compute_max_brightness_per_frame(cap):
+
+    max_brightness_per_frame = []
+
+    # Multithreaded processing
+    with ThreadPoolExecutor() as executor:
+        futures = []
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            # Submit frame for parallel processing
+            futures.append(executor.submit(process_frame, frame))
+        
+        # Collect results
+        for future in futures:
+            max_brightness_per_frame.append(future.result())
+
+    cap.release()
+    
+    return max_brightness_per_frame
 
 subj = '008'
-data_path = os.path.join(folder_path, subj)
+# data_path = os.path.join(folder_path, subj)
 
 def get_contrast_from_video(data_path):
-    vid_path = data_path + '\processed\\'
-    vid_filename = [x for x in os.listdir(vid_path) if '.mkv' in x][0]
-    onsets_filename = [x for x in os.listdir(vid_path) if '.npy' in x][0]
-    audio_onsets = np.load(vid_path + onsets_filename)
+    return data_path
 
-    clip = VideoFileClip.VideoFileClip(vid_path+vid_filename)
-    clip_bw = blackwhite(clip=clip, preserve_luminosity=True)
-    frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] 
-    x,y,w,h = find_mirror(frame)
-    plt.imshow(frame[y:y+w, x:x+h])
-    mirror_crop = crop.crop(clip=clip_bw, x1=x, y1=y, width=w, height=h)
+vid_path = data_path + '\processed\\'
+vid_filename = [x for x in os.listdir(vid_path) if '.mkv' in x][0]
+onsets_filename = [x for x in os.listdir(vid_path) if '.npy' in x][0]
+audio_onsets = np.load(vid_path + onsets_filename)
 
-    # get some info from video
-    vid_samplerate = clip.fps
-    total_frames = clip.reader.nframes
+# crop video to just include mirror, TODO: just use opencv to avoid extra saving
+cap = cv2.VideoCapture(vid_path+vid_filename)
+if not cap.isOpened():
+    raise ValueError("Error opening video file")
 
-    plt.imshow(mirror_crop.get_frame(500*1.0/clip.fps)[:,:,0], cmap='gray') # plot 500th frame
+cap.set(cv2.CAP_PROP_POS_FRAMES, 499) # try below if this doesn't work
+res, frame = cap.read()
+frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+# clip = mpy.VideoFileClip(vid_path+vid_filename)
+# clip_bw = blackwhite(clip=clip, preserve_luminosity=True)
+# frame = clip_bw.get_frame(10*1.0/clip.fps)[:,:,0] 
+x,y,w,h = find_mirror(frame_bw) # if this is not consistent, do 10 random frames and take the mode
+plt.imshow(frame[y:y+w, x:x+h])
 
+# mirror_crop = crop.crop(clip=clip_bw, x1=x, y1=y, width=w, height=h)
+
+# get some info from video
+vid_samplerate = cap.get(cv2.CAP_PROP_FPS) # TODO: what is this in opencv
+total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+if os.exists(vid_path + 'stim_brightness.npy'):
+    stim_brightness = np.load(vid_path + 'stim_brightness.npy')
+else:  # 19 mins
+    stim_brightness = np.empty((total_frames, 1))
+    stim_contrast = np.empty((total_frames, 1))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+
+    print('computing max of frames...')    
+    for i in range(total_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_crop = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
+        # stim_brightness[i] = frame_crop.max()
+        stim_contrast[i] = compute_contrast(frame_crop)
+
+    np.save(vid_path + 'stim_brightness', stim_brightness)
+
+# run through video to make avg mirror plot - 30 seconds
+video_array = np.empty((5000, h, w))
+cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+print('getting avg frame for plot...')    
+for i in range(5000):
+    ret, frame = cap.read()
+    if not ret:
+        break
+    video_array[i] = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
+
+# make avg image of first 5000 frames of mirror
+plt.imshow(np.mean(video_array, axis=0), cmap='gray')
+
+# use the grating onsets and av onsets to epoch vid contrast
+# load trials
+behavior_file_name = [s for s in os.listdir(data_path) if s.endswith('.csv')]
+trials_data = pd.read_csv(os.path.join(data_path, behavior_file_name[0]))
+
+# convert to ONE convention
+trials_df = convert_psychopy_one(trials_data, behavior_file_name[0])
+grating_onsets = trials_df['grating_l.started'].values # sound_trial_start.started
+grating_onsets_shifted = grating_onsets-grating_onsets[0]
+onsets_shifted = grating_onsets_shifted + audio_onsets[0]
+
+# convert to mne for easy epoching
+mne_info = mne.create_info(ch_names=['video', 'stim'], sfreq=vid_samplerate, ch_types=['eyegaze', 'stim'])
+raw = mne.io.RawArray(np.hstack((stim_brightness,np.zeros_like(stim_brightness))).T, mne_info)
+
+onset_events = make_mne_events_array(np.rint(onsets_shifted*vid_samplerate), 1)
+raw.add_events(onset_events, stim_channel='stim')
+events = mne.find_events(raw, stim_channel='stim')  
+onset_event_dict = {'onset':1}  
+onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.15, tmax=.15, baseline=(-.15,-.10), reject=None) 
+onset_epochs_df = onset_epochs.to_data_frame()
+
+sns.lineplot(onset_epochs_df, x='time',y='video', color='k')
+sns.lineplot(onset_epochs_df, x='time',y='video', color='k', hue='epoch')
+
+
+# epoch around av onsets
+# find contrast for frames where onsets should be happening
+epoch_start = -0.15
+epoch_end = 0.1
+# contrast_epochs = np.empty((len(audio_onsets), len(np.arange(epoch_start, epoch_end, step=1/clip.fps))+1))
+# for i,o in enumerate(audio_onsets[:10]):
+#     print(i)
+#     for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/clip.fps)):
+#         f = mirror_crop.get_frame(t)
+#         contrast_epochs[i,j] = compute_max(f)
+
+# plt.plot(np.arange(epoch_start, epoch_end, step=1/clip.fps), contrast_epochs[:10,:24].T-contrast_epochs[:10,0].T)
+
+
+
+epoch_timepoints = np.arange(epoch_start, epoch_end, step=1/vid_samplerate)
+contrast_epochs = np.empty(len(audio_onsets), len(epoch_timepoints))
+for i,o in enumerate(onsets_shifted[:10]):
+    print(i)
+    contrast_epochs[i,:] = stim_brightness[int((o+epoch_start)*vid_samplerate):int((o+epoch_end)*vid_samplerate)]
+    # for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/vid_samplerate)):
+        # cap.set(cv2.CAP_PROP_POS_FRAMES, t*vid_samplerate)
+        # ret, frame = cap.read()
+        # f = mirror_crop.get_frame(t)
+        # contrast_epochs[i,j] = compute_max(f)
+# baseline correct
+baselines = np.mean(contrast_epochs[:,:4], axis=1)
+epochs_bl = np.subtract(contrast_epochs, np.tile(baselines, (len(epoch_timepoints),1)).T)
+
+plt.plot(epoch_timepoints, epochs_bl.T)
+
+
+if False: # some plotting stuff
+        
     # Use ProcessPoolExecutor to parallelize the task
     contrast_list = np.empty((total_frames, 1))
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
         # Map each frame to the compute_contrast function
-        results = list(tqdm(executor.map(compute_contrast, mirror_crop.iter_frames()), total=total_frames))
+        results = list(executor.map(compute_contrast, mirror_crop.iter_frames()))
         # TODO: find progress bar that works
+
     # Store the results into the contrast_list
     for idx, result in enumerate(results):
         contrast_list[idx] = result
@@ -685,6 +815,9 @@ def get_contrast_from_video(data_path):
         contrast_list[idx] = (max-min)/(max+min)
         if idx>500:
             break
+    # ask chatCPT, Michael about turning video in np array
+    # video snapshot showing latency
+    # maybe an average of the mirror to make sure it's correct
 
     for idx in range(total_frames): # is this faster?
         f_bw = mirror_crop.get_frame(idx*1.0/clip.fps)[:,:,0]
@@ -695,54 +828,18 @@ def get_contrast_from_video(data_path):
         contrast_list[idx] = (max-min)/(max+min)
         if idx>500:
             break
+    edges = cv2.Canny(frame,100,200)
+    # Find contours
+    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    # find contrast for frames where onsets should be happening
-    epoch_start = -0.15
-    epoch_end = 0.1
-    contrast_epochs = np.empty((len(audio_onsets), len(np.arange(epoch_start, epoch_end, step=1/clip.fps))+1))
-    for i,o in enumerate(audio_onsets[:10]):
-        print(i)
-        for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/clip.fps)):
-            f = mirror_crop.get_frame(t)
-            contrast_epochs[i,j] = compute_max(f)
-    
-    plt.plot(np.arange(epoch_start, epoch_end, step=1/clip.fps), contrast_epochs[:10,:24].T-contrast_epochs[:10,0].T)
-
-    # do the same thing but use the grating onsets - this is better
-    # load trials
-    behavior_file_name = [s for s in os.listdir(data_path) if s.endswith('.csv')]
-    trials_data = pd.read_csv(os.path.join(data_path, behavior_file_name[0]))
-
-    # convert to ONE convention
-    trials_df = convert_psychopy_one(trials_data, behavior_file_name[0])
-    grating_onsets = trials_df['grating_l.started'].values # sound_trial_start.started
-    grating_onsets_shifted = grating_onsets-grating_onsets[0]
-    onsets_shifted = grating_onsets_shifted + audio_onsets[0]
-
-    contrast_epochs = np.empty((len(audio_onsets), len(np.arange(epoch_start, epoch_end, step=1/clip.fps))+1))
-    for i,o in enumerate(onsets_shifted[:10]):
-        print(i)
-        for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/clip.fps)):
-            f = mirror_crop.get_frame(t)
-            contrast_epochs[i,j] = compute_max(f)
-    
-    plt.plot(np.arange(epoch_start, epoch_end, step=1/clip.fps), contrast_epochs[:10,:24].T-contrast_epochs[:10,0].T)
-
-
-
-    if False: # some plotting stuff
-        edges = cv2.Canny(frame,100,200)
-        # Find contours
-        contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] # make sure this is bw
+    frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] # make sure this is bw
 
 
 
 
-        plt.subplot(121),plt.imshow(frame,cmap = 'gray')
-        plt.title('Original Image'), plt.xticks([]), plt.yticks([])
-        plt.subplot(122),plt.imshow(edges,cmap = 'gray')
-        plt.title('Edge Image'), plt.xticks([]), plt.yticks([])
+    plt.subplot(121),plt.imshow(frame,cmap = 'gray')
+    plt.title('Original Image'), plt.xticks([]), plt.yticks([])
+    plt.subplot(122),plt.imshow(edges,cmap = 'gray')
+    plt.title('Edge Image'), plt.xticks([]), plt.yticks([])
 
-        plt.show()
+    plt.show()
