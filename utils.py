@@ -80,9 +80,11 @@ def plot_psychometric(df, color='black', **kwargs):
 
 # ================================= #
 def convert_psychopy_one(data, file_name):
+
+    session_df = data.copy() # to extract session-level info
     
     # recode some things
-    if 'mouse.x' in data.keys(): # do this if mouse responses
+    if 'eccentricity' in data.keys(): # do this if mouse responses
         # this code merges the columns that are now spread over trials_1, trials_2, etc
         response_mappings = pd.DataFrame({'eccentricity':[15,15,-15,-15], 'correct':[1,0,1,0], 'response':[1,0,0,1]})
         data = data.merge(response_mappings, on=['eccentricity', 'correct'], how='left') # right response = 1, left response = 0
@@ -142,10 +144,32 @@ def convert_psychopy_one(data, file_name):
     # set session number
     data['session'] = ''.join(re.findall(r'\d+', file_name[-15:]))
         
-    # TODO: return separate smaller df with session- and participant-level info
-    # how to save these in ALF on J-drive?
+    ## now also extract session-level info
+    cols2save = ['date', 'expName', 'participant', 
+                 'expStart', 'session_end', 
+                 'psychopyVersion', 'win_size', #'frameRate',
+                 'block_breaks', 'instructions',
+                 'age_slider.response'] \
+                + [c for c in session_df.keys() if 'clicked_name' in c and \
+                   not 'continue_txt' in session_df[c].dropna().unique()[0] and \
+                  len(session_df[c].dropna().unique()[0]) > 0] \
+                + [c for c in session_df.keys() if '.text' in c]
 
-    return data
+    col_dict = {}
+    for c in cols2save:
+        if c in session_df.keys(): # if this can't be found, list nan
+            item = session_df[c].dropna().unique()
+            try: item = item.item()
+            except: continue
+
+            if isinstance(item, list):
+                item = item[0]
+            col_dict.update({c: item})
+        else:
+           col_dict.update({c: np.nan})
+    session_df = pd.DataFrame(col_dict.items(), columns=['name', 'value'])
+
+    return data, session_df
 
 # ================================= #
 def plot_snapshot_behavior(data, folder_save, file_name_save):
