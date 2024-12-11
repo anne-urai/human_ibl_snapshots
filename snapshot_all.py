@@ -30,16 +30,6 @@ from utils_path import folder_path, figures_folder
 #%% =============================== #
 # get files and file contents
 # ================================= #
-
-# Specify the path to the folder containing your CSV files
-usr = os.path.expanduser("~")
-if usr == '/Users/uraiae': # mounted using mountainduck
-    folder_path = '/Volumes/macOS/Users/uraiae/VISUAL-DECISIONS.localized/subjects/'
-elif usr == 'C:\\Users\\Philippa':
-    folder_path = 'D:\winshare\workgroups\FSW\VISUAL-DECISIONS\subjects'
-else: # for local data
-    folder_path = "./data/subjects"
-
 figures_folder = os.path.join(os.getcwd(), 'figures') # to save
 
 # loop over all subject folders
