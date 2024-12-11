@@ -24,7 +24,6 @@ try:
 except:
     import brainbox.behavior.psychofit as psy
 
-
 def get_files_from_folder(folder_path, extension='.csv'):
     # Get all files in the folder
     files = os.listdir(folder_path)
@@ -43,6 +42,17 @@ def get_files_from_folder(folder_path, extension='.csv'):
 #%% =============================== #
 # plotting functions
 # ================================= #
+
+def load_trials(folder_path, subj, data_type='df'):
+    if data_type == 'df':
+        return pd.read_csv(os.join(folder_path, subj, 'alf', 'trials_table.csv'))
+    elif data_type == 'raw':
+        raw_path = os.path.join(folder_path, subj, 'raw_behavior_data')
+        raw_file_name = [s for s in os.listdir(raw_path) if s.endswith('.csv')]
+        return pd.read_csv(os.join(raw_path, raw_file_name))
+    else:
+        raise ValueError('data_type should be "df" or "raw"')
+
 
 def plot_psychometric(df, color='black', **kwargs):
     
@@ -429,20 +439,22 @@ def trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s):
         ffmpeg_extract_subclip(vid_path, cutoff_start_s, cutoff_end_s, targetname=short_vid_path)
     return short_vid_path
 
-def plot_snapshot_audio(data_path, folder_save, fig_name, onset_freq = 5000):
+def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5000):
+
+    raw_video_path = os.join(folder_path, subj, 'raw_video_data')
+    alf_path = os.join(folder_path, subj, 'alf')
 
     # load trials
-    behavior_file_name = [s for s in os.listdir(data_path) if s.endswith('.csv')]
-    trials_data = pd.read_csv(os.path.join(data_path, behavior_file_name[0]))
+    trials_data = load_trials(folder_path, subj, 'raw')
+    trials_df = load_trials(folder_path, subj)
 
-    # convert to ONE convention
-    trials_df = convert_psychopy_one(trials_data, behavior_file_name[0])
+    # get grating onsets
     grating_onsets = trials_df['sound_trial_start.started'].values
     grating_onsets_shifted = grating_onsets-grating_onsets[0]
 
     # find time that video starts
-    vid_filename = [x for x in os.listdir(data_path) if '.mkv' in x]
-    vid_path = os.path.join(data_path, vid_filename[0])
+    vid_filename = [x for x in os.listdir(raw_video_path) if '.mkv' in x]
+    vid_path = os.path.join(raw_video_path, vid_filename[0])
     vid_start_str = str(vid_path)[-12:-4]
     vid_start_time = datetime.strptime(vid_start_str, '%H-%M-%S')
 
@@ -458,12 +470,11 @@ def plot_snapshot_audio(data_path, folder_save, fig_name, onset_freq = 5000):
     cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
     cutoff_end_s = cutoff_start_s + exp_dur
     
-    processed_path = data_path + '\processed\\'
-    short_vid_path = trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s)
+    short_vid_path = trim_video(alf_path, vid_path, cutoff_start_s, cutoff_end_s)
 
     # extract audio if not done
     audio_path = f'{str(short_vid_path)[:-3]}wav'
-    if audio_path.split('\\')[-1] not in os.listdir(processed_path):
+    if audio_path.split('\\')[-1] not in os.listdir(alf_path):
         extract_audio(input_path=short_vid_path, output_path=audio_path, output_format='wav', overwrite=False)
 
     # load audio
@@ -480,7 +491,7 @@ def plot_snapshot_audio(data_path, folder_save, fig_name, onset_freq = 5000):
         audio_onsets_selected = audio_onsets[onset_indices>-1]
 
     audio_onsets_relative_to_start = t[audio_onsets_selected]
-    np.save(processed_path + 'av_onsets', audio_onsets_relative_to_start)
+    np.save(alf_path + 'audio_onsets', audio_onsets_relative_to_start)
 
     audio_onsets_shifted = t[audio_onsets_selected]-t[audio_onsets_selected[0]]
 
@@ -625,13 +636,13 @@ def compute_max(frame):
 subj = '008'
 # data_path = os.path.join(folder_path, subj)
 
-def plot_snapshot_video(data_path, folder_save, fig_name):
-
-    vid_path = data_path + '\processed\\'
-    vid_filename = [x for x in os.listdir(vid_path) if '.mkv' in x][0]
+def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
+    
+    alf_path = os.join(folder_path, subj, 'alf')
+    vid_filename = [x for x in os.listdir(alf_path) if '.mkv' in x][0]
 
     # open video
-    cap = cv2.VideoCapture(vid_path+vid_filename)
+    cap = cv2.VideoCapture(alf_path+vid_filename)
     if not cap.isOpened():
         raise ValueError("Error opening video file")
     
@@ -652,8 +663,10 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
         attempt += 1
     x, y, w, h = coords
 
-    if os.path.exists(vid_path + 'stim_brightness.npy'):
-        stim_brightness = np.load(vid_path + 'stim_brightness.npy')
+    # compute and save max brightness of mirror for every frame
+    if os.path.exists(alf_path + 'stim_brightness.npy'):
+        stim_brightness = np.load(alf_path + 'stim_brightness.npy')
+        t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
     else:  # 20 mins or so
         stim_brightness = np.empty((total_frames, 1))
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -664,8 +677,9 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
                 break
             frame_crop = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
             stim_brightness[i] = frame_crop.max()
-
-        np.save(vid_path + 'stim_brightness', stim_brightness)
+        np.save(alf_path + 'stim_brightness', stim_brightness)
+        t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
+        np.save(alf_path + 'video_times', t)
 
     # run through video to make avg mirror plot - 30 seconds
     video_array = np.empty((2000, h, w))
@@ -679,44 +693,24 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
 
     cap.release()
 
-    # use the grating onsets and av onsets to epoch vid contrast
-    onsets_filename = [x for x in os.listdir(vid_path) if 'onsets' in x][0]
-    audio_onsets = np.load(vid_path + onsets_filename)
+    # use the grating onsets and audio onsets to epoch vid contrast
+    onsets_filename = [x for x in os.listdir(alf_path) if 'audio_onsets' in x][0]
+    audio_onsets = np.load(alf_path + onsets_filename)
 
     #  load trials
-    behavior_file_name = [s for s in os.listdir(data_path) if s.endswith('.csv')]
-    trials_data = pd.read_csv(os.path.join(data_path, behavior_file_name[0]))
-
-    # convert to ONE convention
-    trials_df = convert_psychopy_one(trials_data, behavior_file_name[0])
+    trials_df = load_trials(folder_path, subj)
 
     # find onset times from psychopy and audio
     grating_onsets = trials_df['grating_l.started'].values
     grating_onsets_shifted = grating_onsets-grating_onsets[0]
     onsets_shifted = grating_onsets_shifted + audio_onsets[0]
 
-    # find onset times from video # FIXME: not working yet
-    t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
-    # vid_onsets_selected = []
-    # threshold = 0.6
-    # min_rt = np.min(trials_df['response_time']) # seconds
-    # while (len(vid_onsets_selected) < len(grating_onsets)) & (threshold > 0.1):
-    #     threshold -= 0.1
-    #     vid_onsets = find_video_onsets(stim_brightness-stim_brightness.mean(), threshold, min_rt*vid_samplerate)
-    #     _, onset_indices = find_best_shift(t[vid_onsets], grating_onsets_shifted, (0,20), min_gap)
-    #     vid_onsets_selected = vid_onsets[onset_indices>-1]
-
+    # find onset times from video
     vid_onsets_samples_nans = detect_video_onsets(stim_brightness, onsets_shifted)
     vid_onsets_samples = vid_onsets_samples_nans[~(np.isnan(vid_onsets_samples_nans))]
-    vid_onsets_secs = t[vid_onsets_samples]
 
-    # if len(vid_onsets_selected) == len(grating_onsets):
-    #     offsets= t[vid_onsets_selected] -t[vid_onsets_selected][0] - grating_onsets_shifted
-    #     onsets_shifted = t[vid_onsets_selected]
-    #     print('USING DETECTED ONSETS')
-    # else:
-    #     offsets = np.zeros_like(grating_onsets)
-    #     print('USING AUDIO + PSYCHOPY ONSETS')
+    vid_onsets_secs = t[vid_onsets_samples]
+    np.save(alf_path + 'video_onsets', vid_onsets_secs)
 
     # convert to mne for easy epoching
     mne_info = mne.create_info(ch_names=['video', 'stim'], sfreq=vid_samplerate, ch_types=['eyegaze', 'stim'])
