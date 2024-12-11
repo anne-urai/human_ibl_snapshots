@@ -602,12 +602,13 @@ def find_mirror(frame):
         x, y, w, h = cv2.boundingRect(approx)
         aspect_ratio = float(w) / h
         if 0.8 < aspect_ratio < 1.2:  # Adjust as needed
+                # print(i, aspect_ratio)
                 mask = np.zeros_like(frame)
                 cv2.drawContours(mask, [approx], -1, 255, -1)
                 mean_intensity = cv2.mean(frame, mask=mask)[0]
                 _, max_intensity,_,_ = cv2.minMaxLoc(frame, mask=mask)
                 if (max_intensity > 220) & (mean_intensity > 150):
-                    print(i, max_intensity, mean_intensity)
+                    # print(i, max_intensity, mean_intensity)
                     mirror_loc = [x,y,w,h]
     return mirror_loc
 
@@ -633,16 +634,23 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
     cap = cv2.VideoCapture(vid_path+vid_filename)
     if not cap.isOpened():
         raise ValueError("Error opening video file")
-
-    # crop video to just include mirror
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 499)
-    ret, frame = cap.read()
-    frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    x,y,w,h = find_mirror(frame_bw) # if this is not consistent, do 10 random frames and take the mode
-
+    
     # get some info from video
     vid_samplerate = cap.get(cv2.CAP_PROP_FPS) 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # crop video to just include mirror
+    attempt = 0
+    coords = []
+    while not coords and attempt < 10:
+        selected_idx = np.random.randint(total_frames)
+        print(f'attempt {attempt+1}, trying frame {selected_idx}')
+        cap.set(cv2.CAP_PROP_POS_FRAMES, selected_idx)
+        ret, frame = cap.read()
+        frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        coords = find_mirror(frame_bw)
+        attempt += 1
+    x, y, w, h = coords
 
     if os.path.exists(vid_path + 'stim_brightness.npy'):
         stim_brightness = np.load(vid_path + 'stim_brightness.npy')
