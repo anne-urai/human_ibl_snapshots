@@ -13,7 +13,6 @@ requirements: MNE installed; psychofit installed
 # ================================= #
 
 import os
-from io import StringIO
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
@@ -25,21 +24,12 @@ import utils
 from audio_extract import extract_audio
 from tqdm import tqdm
 
+# flexible paths
+from utils_path import folder_path, figures_folder
+
 #%% =============================== #
 # get files and file contents
 # ================================= #
-
-# Specify the path to the folder containing your CSV files
-usr = os.path.expanduser("~")
-if usr == '/Users/uraiae': # mounted using mountainduck
-    folder_path = '/Volumes/macOS/Users/uraiae/VISUAL-DECISIONS.localized/subjects/'
-elif usr == 'C:\\Users\\Philippa':
-    folder_path = 'D:\winshare\workgroups\FSW\VISUAL-DECISIONS\subjects'
-    # folder_path = "./data/subjects"
-else: # for local data
-    folder_path = "./data/subjects"
-
-figures_folder = os.path.join(os.getcwd(), 'figures') # to save
 
 # loop over all subject folders
 subjects = sorted(os.listdir(folder_path))
@@ -92,7 +82,6 @@ for subj in tqdm(subjects):
     # audio_path = f'{str(vid_path)[:-3]}wav'
     # if audio_path.split('\\')[-1] not in os.listdir(folder_path):
     #     extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
-
     # # extract pupil data
 
 
