@@ -721,8 +721,7 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
     # convert to mne for easy epoching
     mne_info = mne.create_info(ch_names=['video', 'stim'], sfreq=vid_samplerate, ch_types=['eyegaze', 'stim'])
     raw = mne.io.RawArray(np.hstack((stim_brightness,np.zeros_like(stim_brightness))).T, mne_info)
-    onset_events = make_mne_events_array(np.rint(onsets_shifted*vid_samplerate), 1)
-
+    # onset_events = make_mne_events_array(np.rint(onsets_shifted*vid_samplerate), 1)
     onset_events = make_mne_events_array(vid_onsets_samples, 1)
     raw.add_events(onset_events, stim_channel='stim')
     events = mne.find_events(raw, stim_channel='stim')  
@@ -735,8 +734,8 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
     # ================================= #
 
     sns.set_style('darkgrid')
-    # fig, ax = plt.subplot_mosaic([['A','A', 'A'],['B', 'F', 'C'],['B','F', 'D'], ['B','F', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
-    fig, ax = plt.subplot_mosaic([['A', 'A'],['B', 'C'],['B', 'D'], ['B', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
+    fig, ax = plt.subplot_mosaic([['A','A', 'A'],['B', 'F', 'C'],['B','F', 'D'], ['B','F', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
+    # fig, ax = plt.subplot_mosaic([['A', 'A'],['B', 'C'],['B', 'D'], ['B', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
 
     # make avg image of first 5000 frames of mirror
     ax['B'].imshow(np.mean(video_array, axis=0), cmap='gray')
@@ -752,7 +751,7 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
     segment_seconds = np.arange(t_start*60, (t_start+t_dur)*60, step=1/vid_samplerate)
 
     ax['A'].plot(segment_seconds, segment)
-    ax['A'].set_title('video max brightness snippet')
+    ax['A'].set_title('max brightness snippet')
     ax['A'].set_xlabel('time from session start (s)')
     ax['A'].set_ylabel('mirror max brightness')
     ax['A'].vlines(onsets_shifted, ymin=np.min(segment), ymax=np.max(segment), color='orange', linestyle='--', label='psychopy onset')
@@ -784,9 +783,11 @@ def plot_snapshot_video(data_path, folder_save, fig_name):
     # barplot version
     # sns.barplot(merged[(merged.time>0)&(merged.time<.05)], x='contrastLeft', y='video')
 
-    # ax['F'].scatter(range(len(offsets)), offsets*1000, c='purple') 
-    # ax['F'].set_xlabel('trial')
-    # ax['F'].set_ylabel('offset (video - psychopy) [ms]')   
+    onsets_not_nan = ~np.isnan(vid_onsets_samples_nans)
+    ax['F'].scatter(np.arange(len(vid_onsets_samples_nans))[onsets_not_nan], vid_onsets_secs - onsets_shifted[onsets_not_nan], c='purple') 
+    ax['F'].set_xlim(0,len(vid_onsets_samples_nans))
+    ax['F'].set_xlabel('trial')
+    ax['F'].set_ylabel('offset (video - psychopy) [ms]')   
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     sns.despine(trim=True)
