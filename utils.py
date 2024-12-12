@@ -45,11 +45,11 @@ def get_files_from_folder(folder_path, extension='.csv'):
 
 def load_trials(folder_path, subj, data_type='df'):
     if data_type == 'df':
-        return pd.read_csv(os.join(folder_path, subj, 'alf', 'trials_table.csv'))
+        return pd.read_csv(os.path.join(folder_path, subj, 'alf', 'trials_table.csv'))
     elif data_type == 'raw':
         raw_path = os.path.join(folder_path, subj, 'raw_behavior_data')
         raw_file_name = [s for s in os.listdir(raw_path) if s.endswith('.csv')]
-        return pd.read_csv(os.join(raw_path, raw_file_name))
+        return pd.read_csv(os.path.join(raw_path, raw_file_name))
     else:
         raise ValueError('data_type should be "df" or "raw"')
 
@@ -441,8 +441,8 @@ def trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s):
 
 def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5000):
 
-    raw_video_path = os.join(folder_path, subj, 'raw_video_data')
-    alf_path = os.join(folder_path, subj, 'alf')
+    raw_video_path = os.path.join(folder_path, subj, 'raw_video_data')
+    alf_path = os.path.join(folder_path, subj, 'alf')
 
     # load trials
     trials_data = load_trials(folder_path, subj, 'raw')
@@ -638,11 +638,11 @@ subj = '008'
 
 def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     
-    alf_path = os.join(folder_path, subj, 'alf')
+    alf_path = os.path.join(folder_path, subj, 'alf')
     vid_filename = [x for x in os.listdir(alf_path) if '.mkv' in x][0]
 
     # open video
-    cap = cv2.VideoCapture(alf_path+vid_filename)
+    cap = cv2.VideoCapture(os.path.join(alf_path,vid_filename))
     if not cap.isOpened():
         raise ValueError("Error opening video file")
     
@@ -664,8 +664,8 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     x, y, w, h = coords
 
     # compute and save max brightness of mirror for every frame
-    if os.path.exists(alf_path + 'stim_brightness.npy'):
-        stim_brightness = np.load(alf_path + 'stim_brightness.npy')
+    if os.path.exists(os.path.join(alf_path, 'stim_brightness.npy')):
+        stim_brightness = np.load(os.path.join(alf_path, 'stim_brightness.npy'))
         t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
     else:  # 20 mins or so
         stim_brightness = np.empty((total_frames, 1))
@@ -677,9 +677,9 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
                 break
             frame_crop = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
             stim_brightness[i] = frame_crop.max()
-        np.save(alf_path + 'stim_brightness', stim_brightness)
+        np.save(os.path.join(alf_path, 'stim_brightness'), stim_brightness)
         t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
-        np.save(alf_path + 'video_times', t)
+        np.save(os.path.join(alf_path, 'video_times'), t)
 
     # run through video to make avg mirror plot - 30 seconds
     video_array = np.empty((2000, h, w))
@@ -694,8 +694,8 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     cap.release()
 
     # use the grating onsets and audio onsets to epoch vid contrast
-    onsets_filename = [x for x in os.listdir(alf_path) if 'audio_onsets' in x][0]
-    audio_onsets = np.load(alf_path + onsets_filename)
+    audio_onsets_filename = [x for x in os.listdir(alf_path) if 'audio_onsets' in x][0]
+    audio_onsets = np.load(os.path.join(alf_path, audio_onsets_filename))
 
     #  load trials
     trials_df = load_trials(folder_path, subj)
@@ -707,10 +707,15 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
 
     # find onset times from video
     vid_onsets_samples_nans = detect_video_onsets(stim_brightness, onsets_shifted)
-    vid_onsets_samples = vid_onsets_samples_nans[~(np.isnan(vid_onsets_samples_nans))]
+    onsets_not_nan = ~np.isnan(vid_onsets_samples_nans)
+    vid_onsets_samples = vid_onsets_samples_nans[onsets_not_nan].astype(int)
 
-    vid_onsets_secs = t[vid_onsets_samples]
-    np.save(alf_path + 'video_onsets', vid_onsets_secs)
+    vid_onsets_secs = np.zeros_like(vid_onsets_samples_nans, dtype=np.float64)
+    vid_onsets_secs[onsets_not_nan] = t[vid_onsets_samples]
+    if np.any(~onsets_not_nan):
+        vid_onsets_secs[~onsets_not_nan] = np.nan
+    # vid_onsets_secs = t[vid_onsets_samples]
+    np.save(os.path.join(alf_path, 'video_onsets'), vid_onsets_secs)
 
     # convert to mne for easy epoching
     mne_info = mne.create_info(ch_names=['video', 'stim'], sfreq=vid_samplerate, ch_types=['eyegaze', 'stim'])
@@ -728,7 +733,7 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     # ================================= #
 
     sns.set_style('darkgrid')
-    fig, ax = plt.subplot_mosaic([['A','A', 'A'],['B', 'F', 'C'],['B','F', 'D'], ['B','F', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
+    fig, ax = plt.subplot_mosaic([['A','A', 'A'],['B','F', 'D'], ['B','F', 'E']], height_ratios=[0.3, 0.2, 0.2], layout='constrained', figsize=(12,8))
     # fig, ax = plt.subplot_mosaic([['A', 'A'],['B', 'C'],['B', 'D'], ['B', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
 
     # make avg image of first 5000 frames of mirror
@@ -755,17 +760,17 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     ax['A'].margins(x=0)
     ax['A'].legend()
 
-    sns.lineplot(onset_epochs_df, x='time',y='video', color='k', ax=ax['C'])
-    ax['C'].set_title(f'average of onsets, {len(vid_onsets_samples)} detected')
-    ax['C'].set_ylabel('change in brightness')
-    ax['C'].set_xlabel('time from onset')
+    # sns.lineplot(onset_epochs_df, x='time',y='video', color='k', ax=ax['C'])
+    # ax['C'].set_title(f'average of onsets, {len(vid_onsets_samples)} detected')
+    # ax['C'].set_ylabel('change in brightness')
+    # ax['C'].set_xlabel('time from onset')
     
     trials_reorg = trials_df.reset_index()
     trials_reorg.index.name = 'epoch'
     merged = onset_epochs_df.merge(trials_reorg, on='epoch')
 
     sns.lineplot(merged, x='time',y='video', color='k', style='epoch', hue='contrastLeft', alpha=0.5, ax=ax['D'], palette='viridis', dashes='')
-    ax['D'].set_title('all onsets')
+    ax['D'].set_title(f'all onsets, {len(vid_onsets_samples)} detected')
     ax['D'].set_ylabel('change in brightness')
     ax['D'].set_xlabel('time from onset')
     ax['D'].legend().remove()
@@ -777,11 +782,10 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     # barplot version
     # sns.barplot(merged[(merged.time>0)&(merged.time<.05)], x='contrastLeft', y='video')
 
-    onsets_not_nan = ~np.isnan(vid_onsets_samples_nans)
-    ax['F'].scatter(np.arange(len(vid_onsets_samples_nans))[onsets_not_nan], vid_onsets_secs - onsets_shifted[onsets_not_nan], c='purple') 
+    ax['F'].scatter(np.arange(len(vid_onsets_samples_nans))[onsets_not_nan], vid_onsets_secs[onsets_not_nan] - onsets_shifted[onsets_not_nan], c='purple') 
     ax['F'].set_xlim(0,len(vid_onsets_samples_nans))
     ax['F'].set_xlabel('trial')
-    ax['F'].set_ylabel('offset (video - psychopy) [ms]')   
+    ax['F'].set_ylabel('offset (video - psychopy) [s]')   
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     sns.despine(trim=True)
@@ -792,7 +796,7 @@ def detect_video_onsets(frame_data, psychopy_onsets, search_window_t=0.2, sampli
     search_window_samples = int(search_window_t * sampling_rate)
     onset_idx = []
     for o in psychopy_onsets_samples:
-        search_window = frame_data[int(o)-search_window_samples:int(o)]
+        search_window = frame_data[int(o)-search_window_samples:int(o)+search_window_samples]
         # plt.plot(search_window)
         if np.any(np.argmax((search_window - np.roll(search_window,1))[1:]>1)): 
             increase_idx = np.argmax((search_window - np.roll(search_window,1))[1:]>1) + 1
