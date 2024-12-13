@@ -77,13 +77,16 @@ for subj in tqdm(subjects):
     except:
         continue
 
-    # # extract audio if not done (takes a while)
-    # vid_file_name = [s for s in os.listdir(os.path.join(folder_path, subj, 'raw_video_data')) if s.endswith('.mkv') and not s.startswith('.')]
-    # vid_path = os.path.join(folder_path, subj, 'raw_video_data', vid_file_name[0])
-    # audio_path = f'{str(vid_path)[:-3]}wav'
-    # if audio_path.split('\\')[-1] not in os.listdir(folder_path):
-    #     extract_audio(input_path=vid_path, output_path=audio_path, output_format='wav', overwrite=False)
     # # extract pupil data
+
+    try:
+        utils.process_audio(folder_path, subj)
+    except:
+        continue
+
+    # # process video
+   
+
 
 
 #%% =============================== #

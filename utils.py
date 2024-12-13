@@ -439,7 +439,90 @@ def trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s):
         ffmpeg_extract_subclip(vid_path, cutoff_start_s, cutoff_end_s, targetname=short_vid_path)
     return short_vid_path
 
-def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5000):
+def plot_snapshot_audio(folder_path, subj, folder_save, fig_name):
+    
+    alf_path = os.path.join(folder_path, subj, 'alf')
+    audio_filename = [x for x in os.listdir(alf_path) if '.wav' in x][0]
+
+    # load audio, onsets, timepoints
+    samplerate, data = wavfile.read(os.path.join(alf_path, audio_filename))
+    data_short = data.astype('float')[:,0]
+    audio_onsets = np.load(os.path.join(alf_path, 'audio_onsets.npy'))
+    audio_onsets_shifted = audio_onsets - audio_onsets[0]
+    seconds = np.load(os.path.join(alf_path, 'audio_times.npy'))
+
+    # load trials, get grating onsets
+    trials_df = load_trials(folder_path, subj)
+    grating_onsets = trials_df['sound_trial_start.started'].values
+    grating_onsets_shifted = grating_onsets-grating_onsets[0]
+
+    # snippet to plot
+    len_segment_s = 60
+    segment_start = 10*60*samplerate
+    len_segment_samples = samplerate*len_segment_s
+    segment = data_short[segment_start:segment_start+len_segment_samples]
+    segment_seconds = seconds[segment_start:segment_start+len_segment_samples]
+
+    # get feedback times from trials
+    correct_feedback_times = audio_onsets[trials_df['feedbackType']==1] + trials_df[trials_df['feedbackType']==1]['response_time']
+    error_feedback_times = audio_onsets[trials_df['feedbackType']==-1] + trials_df[trials_df['feedbackType']==-1]['response_time']
+
+    # convert to mne for easy epoching
+    mne_info = mne.create_info(ch_names=['audio', 'stim'], sfreq=samplerate, ch_types=['misc', 'stim'])
+    raw = mne.io.RawArray(np.vstack((data_short,np.zeros_like(data_short))), mne_info)
+
+    onset_events = make_mne_events_array(np.rint(audio_onsets*samplerate), 1)
+    correct_events = make_mne_events_array(np.rint(audio_onsets[trials_df['feedbackType']==1]*samplerate+trials_df[trials_df['feedbackType']==1]['response_time']*samplerate), 2)
+    error_events = make_mne_events_array(np.rint(audio_onsets[trials_df['feedbackType']==-1]*samplerate+trials_df[trials_df['feedbackType']==-1]['response_time']*samplerate), 3)
+    
+    all_events = np.vstack((onset_events, correct_events, error_events))
+    raw.add_events(all_events, stim_channel='stim')
+    events = mne.find_events(raw, stim_channel='stim')  
+    fb_event_dict = {'correct':2, 'error':3}   
+    onset_event_dict = {'onset':1}  
+    onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
+    fb_epochs = mne.Epochs(raw, events=events, event_id=fb_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
+    onset_epochs_df = onset_epochs.to_data_frame()
+    fb_epochs_df = fb_epochs.to_data_frame()
+
+    # ================================= #
+    # make a snapshot figure
+    # ================================= #
+
+    sns.set_style('darkgrid')
+    fig, ax = plt.subplot_mosaic([['A','A'],['B', 'C'],['B','D'],['B','E']], height_ratios=[0.4, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
+
+    offsets = audio_onsets_shifted - grating_onsets_shifted
+    ax['B'].scatter(range(len(offsets)), offsets*1000, c='purple') 
+    ax['B'].set_xlabel('trial')
+    ax['B'].set_ylabel('offset (audio - psychopy) [ms]')   
+    
+    ax['A'].plot(segment_seconds, segment)
+    ax['A'].set_title('audio snippet')
+    ax['A'].set_xlabel('time from session start (s)')
+    ax['A'].set_ylabel('audio amplitude')
+    ax['A'].vlines(audio_onsets, ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
+    ax['A'].vlines(correct_feedback_times, ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
+    ax['A'].vlines(error_feedback_times, ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
+    ax['A'].set_xlim(segment_seconds[0], segment_seconds[-1])
+    ax['A'].margins(x=0)
+    ax['A'].legend()
+
+    sns.lineplot(onset_epochs_df.groupby(['time','condition']).mean(), x='time',y='audio', color='k', ax=ax['C'])
+    sns.lineplot(fb_epochs_df[fb_epochs_df['condition']=='correct'], x='time',y='audio', estimator='mean', errorbar=None, color='green', ax=ax['D'])
+    sns.lineplot(fb_epochs_df[fb_epochs_df['condition']=='error'], x='time',y='audio', estimator='mean', errorbar=None, color='red', ax=ax['E'])
+    ax['C'].set_title('locked to onset')        
+    ax['D'].set_title('locked to correct')        
+    ax['E'].set_title('locked to error')        
+    ax['C'].sharex(ax['D'])
+    ax['D'].sharex(ax['E'])
+    ax['E'].set_xlabel('time from event (s)')
+
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    sns.despine(trim=True)
+    fig.savefig(os.path.join(folder_save, fig_name))
+
+def process_audio(folder_path, subj, onset_freq = 5000):
 
     raw_video_path = os.path.join(folder_path, subj, 'raw_video_data')
     alf_path = os.path.join(folder_path, subj, 'alf')
@@ -466,12 +549,13 @@ def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5
         exp_end_time = datetime.strptime(exp_end_str, '%Hh%M.%S.%f') + timedelta(seconds=5)
     else:
         exp_end_time = exp_start_time + timedelta(seconds=(trials_df['feedback_sound.stopped'].tail(1).values-trials_df['sound_trial_start.started'].head(1).values)[0]+10)
+    
     exp_dur = (exp_end_time-exp_start_time).total_seconds()
     cutoff_start_s = (exp_start_time-vid_start_time).total_seconds()
     cutoff_end_s = cutoff_start_s + exp_dur
+    np.save(os.path.join(alf_path, 'cutoff_start_end'), np.array([cutoff_start_s, cutoff_end_s]))
     
     short_vid_path = trim_video(alf_path, vid_path, cutoff_start_s, cutoff_end_s)
-    np.save(os.path.join(alf_path, 'cutoff_start_end'), np.array([cutoff_start_s, cutoff_end_s]))
 
     # extract audio if not done
     audio_path = f'{str(short_vid_path)[:-3]}wav'
@@ -506,74 +590,9 @@ def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5
         print(f'maximum offset between psychopy and audio is {max_offset} ms')
 
     timepoints = np.arange(0, len(data_short)/samplerate, 1/samplerate)
-    seconds = pd.to_datetime(timepoints, unit='s')
-    seconds_array = np.array(pd.to_timedelta(seconds - seconds[0], unit='s').total_seconds())
-    np.save(os.path.join(alf_path, 'audio_times'), seconds_array) 
-
-    len_segment_s = 60
-    segment_start = 10*60*samplerate
-    len_segment_samples = samplerate*len_segment_s
-    segment = data_short[segment_start:segment_start+len_segment_samples]
-    segment_seconds = seconds[segment_start:segment_start+len_segment_samples]
-
-    correct_feedback_times = t[audio_onsets_selected[trials_df['feedbackType']==1]] + trials_df[trials_df['feedbackType']==1]['response_time']
-    error_feedback_times = t[audio_onsets_selected[trials_df['feedbackType']==-1]] + trials_df[trials_df['feedbackType']==-1]['response_time']
-
-    # convert to mne for easy epoching
-    mne_info = mne.create_info(ch_names=['audio', 'stim'], sfreq=samplerate, ch_types=['misc', 'stim'])
-    raw = mne.io.RawArray(np.vstack((data_short,np.zeros_like(data_short))), mne_info)
-
-    onset_events = make_mne_events_array(np.rint(t[audio_onsets_selected]*samplerate), 1)
-    correct_events = make_mne_events_array(np.rint(t[audio_onsets_selected[trials_df['feedbackType']==1]]*samplerate+trials_df[trials_df['feedbackType']==1]['response_time']*samplerate), 2)
-    error_events = make_mne_events_array(np.rint(t[audio_onsets_selected[trials_df['feedbackType']==-1]]*samplerate+trials_df[trials_df['feedbackType']==-1]['response_time']*samplerate), 3)
-    
-    all_events = np.vstack((onset_events, correct_events, error_events))
-    raw.add_events(all_events, stim_channel='stim')
-    events = mne.find_events(raw, stim_channel='stim')  
-    fb_event_dict = {'correct':2, 'error':3}   
-    onset_event_dict = {'onset':1}  
-    onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
-    fb_epochs = mne.Epochs(raw, events=events, event_id=fb_event_dict, tmin=-.1, tmax=.5, baseline=None, reject=None)
-    onset_epochs_df = onset_epochs.to_data_frame()
-    fb_epochs_df = fb_epochs.to_data_frame()
-
-    # ================================= #
-    # make a snapshot figure
-    # ================================= #
-
-    sns.set_style('darkgrid')
-    fig, ax = plt.subplot_mosaic([['A','A'],['B', 'C'],['B','D'],['B','E']], height_ratios=[0.4, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
-
-    offsets = audio_onsets_shifted - grating_onsets_shifted
-    ax['B'].scatter(range(len(offsets)), offsets*1000, c='purple') 
-    ax['B'].set_xlabel('trial')
-    ax['B'].set_ylabel('offset (audio - psychopy) [ms]')   
-    
-    ax['A'].plot(segment_seconds, segment)
-    ax['A'].set_title('audio snippet')
-    ax['A'].set_xlabel('time from session start (mm:ss)')
-    ax['A'].set_ylabel('audio amplitude')
-    ax['A'].vlines(pd.to_datetime(t[audio_onsets_selected], unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='onset')
-    ax['A'].vlines(pd.to_datetime(correct_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='g', linestyle=':', label='correct')
-    ax['A'].vlines(pd.to_datetime(error_feedback_times, unit='s'), ymin=np.min(segment), ymax=np.max(segment), color='r', linestyle=':', label='error')
-    ax['A'].set_xlim(segment_seconds[0], segment_seconds[-1])
-    ax['A'].xaxis.set_major_formatter(mdates.DateFormatter("%M:%S"))
-    ax['A'].margins(x=0)
-    ax['A'].legend()
-
-    sns.lineplot(onset_epochs_df.groupby(['time','condition']).mean(), x='time',y='audio', color='k', ax=ax['C'])
-    sns.lineplot(fb_epochs_df[fb_epochs_df['condition']=='correct'], x='time',y='audio', estimator='mean', errorbar=None, color='green', ax=ax['D'])
-    sns.lineplot(fb_epochs_df[fb_epochs_df['condition']=='error'], x='time',y='audio', estimator='mean', errorbar=None, color='red', ax=ax['E'])
-    ax['C'].set_title('locked to onset')        
-    ax['D'].set_title('locked to correct')        
-    ax['E'].set_title('locked to error')        
-    ax['C'].sharex(ax['D'])
-    ax['D'].sharex(ax['E'])
-    ax['E'].set_xlabel('time from event (s)')
-
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-    sns.despine(trim=True)
-    fig.savefig(os.path.join(folder_save, fig_name))
+    # seconds = pd.to_datetime(timepoints, unit='s')
+    # seconds_array = np.array(pd.to_timedelta(seconds - seconds[0], unit='s').total_seconds())
+    np.save(os.path.join(alf_path, 'audio_times'), timepoints) 
 
 
 def find_best_shift(audio_onsets, grating_onsets_shifted, shift_start_end=(0,20), delta=0.2):
