@@ -48,7 +48,7 @@ def load_trials(folder_path, subj, data_type='df'):
         return pd.read_csv(os.path.join(folder_path, subj, 'alf', 'trials_table.csv'))
     elif data_type == 'raw':
         raw_path = os.path.join(folder_path, subj, 'raw_behavior_data')
-        raw_file_name = [s for s in os.listdir(raw_path) if s.endswith('.csv')]
+        raw_file_name = [s for s in os.listdir(raw_path) if s.endswith('.csv')][0]
         return pd.read_csv(os.path.join(raw_path, raw_file_name))
     else:
         raise ValueError('data_type should be "df" or "raw"')
@@ -434,7 +434,7 @@ def make_mne_events_array(event_times_samples:np.ndarray, event_code):
 def trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s):
     if not os.path.exists(processed_path):
         os.makedirs(processed_path)
-    short_vid_path = processed_path + 'short_' + os.path.split(vid_path)[-1]
+    short_vid_path = os.path.join(processed_path, 'short_' + os.path.split(vid_path)[-1])
     if not os.path.exists(short_vid_path):
         ffmpeg_extract_subclip(vid_path, cutoff_start_s, cutoff_end_s, targetname=short_vid_path)
     return short_vid_path
@@ -471,6 +471,7 @@ def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5
     cutoff_end_s = cutoff_start_s + exp_dur
     
     short_vid_path = trim_video(alf_path, vid_path, cutoff_start_s, cutoff_end_s)
+    np.save(os.path.join(alf_path, 'cutoff_start_end'), np.array([cutoff_start_s, cutoff_end_s]))
 
     # extract audio if not done
     audio_path = f'{str(short_vid_path)[:-3]}wav'
@@ -491,11 +492,11 @@ def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5
         audio_onsets_selected = audio_onsets[onset_indices>-1]
 
     audio_onsets_relative_to_start = t[audio_onsets_selected]
-    np.save(alf_path + 'audio_onsets', audio_onsets_relative_to_start)
+    np.save(os.path.join(alf_path, 'audio_onsets'), audio_onsets_relative_to_start)
 
     audio_onsets_shifted = t[audio_onsets_selected]-t[audio_onsets_selected[0]]
 
-    # check equal number of onsets and onsets within 100ms
+    # check equal number of onsets and onsets within 150ms
     assert len(grating_onsets) == len(audio_onsets_selected), f'audio {len(audio_onsets_selected)} onsets, psychopy {len(grating_onsets)} onsets'
     print(f'success: {len(grating_onsets)} onsets detected')
     if not np.isclose(audio_onsets_shifted, grating_onsets_shifted, atol=0.15).all():
@@ -506,6 +507,8 @@ def plot_snapshot_audio(folder_path, subj, folder_save, fig_name, onset_freq = 5
 
     timepoints = np.arange(0, len(data_short)/samplerate, 1/samplerate)
     seconds = pd.to_datetime(timepoints, unit='s')
+    seconds_array = np.array(pd.to_timedelta(seconds - seconds[0], unit='s').total_seconds())
+    np.save(os.path.join(alf_path, 'audio_times'), seconds_array) 
 
     len_segment_s = 60
     segment_start = 10*60*samplerate
@@ -631,10 +634,6 @@ def compute_contrast(frame):
 def compute_max(frame):
     f = frame[:, :, 0]
     return np.max(f)
-
-
-subj = '008'
-# data_path = os.path.join(folder_path, subj)
 
 def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     
