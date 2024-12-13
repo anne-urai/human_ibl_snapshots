@@ -119,11 +119,19 @@ for subj in subjects:
     if not os.path.exists(os.path.join(figures_folder, subj + '_audio_snapshot.png')):
         try:
             utils.plot_snapshot_audio(os.path.join(folder_path, subj), figures_folder, subj + '_audio_snapshot.png')
+        
         except Exception as e:
             print("skipped subject with error", subj, e)
     else:
         continue
 
-    #TODO: webcam snapshot
+    if not os.path.exists(os.path.join(figures_folder, subj + '_video_snapshot.png')):
+        try:
+            utils.plot_snapshot_video(os.path.join(folder_path, subj), figures_folder, subj + '_video_snapshot.png')
+        
+        except Exception as e:
+            print("skipped subject with error", subj, e)
+    else:
+        continue
     
 # %%
