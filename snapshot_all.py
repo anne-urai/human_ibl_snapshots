@@ -84,7 +84,10 @@ for subj in tqdm(subjects):
     except:
         continue
 
-    # # process video
+    try:
+        utils.process_video(folder_path, subj)
+    except:
+        continue
    
 
 

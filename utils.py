@@ -655,6 +655,117 @@ def compute_max(frame):
     return np.max(f)
 
 def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
+
+    alf_path = os.path.join(folder_path, subj, 'alf')
+
+    # load stim brightness, times
+    stim_brightness = np.load(os.path.join(alf_path, 'stim_brightness.npy'))
+    video_times = np.load(os.path.join(alf_path, 'video_times.npy'))
+    video_onsets = np.load(os.path.join(alf_path, 'video_onsets.npy'))
+
+    onsets_not_nan = ~np.isnan(video_onsets)
+    if np.any(~onsets_not_nan):
+        video_onsets[~onsets_not_nan] = np.nan
+
+    # load trials, get psychopy onsets
+    trials_df = load_trials(folder_path, subj)
+    audio_onsets_filename = [x for x in os.listdir(alf_path) if 'audio_onsets' in x][0]
+    audio_onsets = np.load(os.path.join(alf_path, audio_onsets_filename))
+    grating_onsets = trials_df['grating_l.started'].values
+    grating_onsets_shifted = grating_onsets - grating_onsets[0] + audio_onsets[0]
+
+    # open video
+    vid_filename = [x for x in os.listdir(alf_path) if '.mkv' in x][0]
+    cap = cv2.VideoCapture(os.path.join(alf_path,vid_filename))
+    if not cap.isOpened():
+        raise ValueError("Error opening video file")
+    
+    # get some info from video
+    vid_samplerate = cap.get(cv2.CAP_PROP_FPS) 
+    vid_onsets_samples = (video_onsets * vid_samplerate).astype(int)
+
+    # run through video to make avg mirror plot - 30 seconds
+    x,y,w,h = np.load(os.path.join(alf_path, 'mirror_coords.npy'))
+    video_array = np.empty((2000, h, w))
+    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+    print('getting avg frame for plot...')    
+    for i in range(2000):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        video_array[i] = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
+
+    cap.release()
+
+    # convert to mne for easy epoching
+    mne_info = mne.create_info(ch_names=['video', 'stim'], sfreq=vid_samplerate, ch_types=['eyegaze', 'stim'])
+    raw = mne.io.RawArray(np.hstack((stim_brightness,np.zeros_like(stim_brightness))).T, mne_info)
+    onset_events = make_mne_events_array(vid_onsets_samples[onsets_not_nan], 1)
+    raw.add_events(onset_events, stim_channel='stim')
+    events = mne.find_events(raw, stim_channel='stim')  
+    onset_event_dict = {'onset':1}  
+    onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.15, tmax=.15, baseline=(-.15,-.10), reject=None) 
+    onset_epochs_df = onset_epochs.to_data_frame()
+
+    # ================================= #
+    # make a snapshot figure
+    # ================================= #
+
+    sns.set_style('darkgrid')
+    fig, ax = plt.subplot_mosaic([['A','A', 'A'],['B','F', 'D'], ['B','F', 'E']], height_ratios=[0.3, 0.2, 0.2], layout='constrained', figsize=(12,8))
+
+    # make avg image of first 5000 frames of mirror
+    ax['B'].imshow(np.mean(video_array, axis=0), cmap='gray')
+    ax['B'].grid(None)
+    ax['B'].set_title('selected mirror crop')
+    ax['B'].axis('off')
+
+    t_start = 10 # mins
+    t_dur = 1 # min
+    sample_start = int(t_start * 60 * vid_samplerate)
+    sample_dur = int(t_dur * 60 * vid_samplerate)
+    segment = stim_brightness[sample_start:sample_start+sample_dur]
+    segment_seconds = video_times[sample_start:sample_start+sample_dur]
+
+    ax['A'].plot(segment_seconds, segment)
+    ax['A'].set_title('max brightness snippet')
+    ax['A'].set_xlabel('time from session start (s)')
+    ax['A'].set_ylabel('mirror max brightness')
+    ax['A'].vlines(grating_onsets_shifted, ymin=np.min(segment), ymax=np.max(segment), color='orange', linestyle='--', label='psychopy onset')
+    ax['A'].vlines(video_onsets, ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='video onset')
+    ax['A'].set_xlim(segment_seconds[0], segment_seconds[-1])
+    ax['A'].margins(x=0)
+    ax['A'].legend()
+    
+    trials_reorg = trials_df.reset_index()
+    trials_reorg.index.name = 'epoch'
+    merged = onset_epochs_df.merge(trials_reorg, on='epoch')
+
+    sns.lineplot(merged, x='time',y='video', color='k', style='epoch', hue='contrastLeft', alpha=0.5, ax=ax['D'], palette='viridis', dashes='')
+    ax['D'].set_title(f'all onsets, {len(vid_onsets_samples)} detected')
+    ax['D'].set_ylabel('change in brightness')
+    ax['D'].set_xlabel('time from onset')
+    ax['D'].legend().remove()
+    
+    sns.lineplot(merged, x='time',y='video', color='k', hue='contrastLeft', alpha=0.5, ax=ax['E'], palette='viridis')
+    ax['E'].set_title('mean over left contrast')
+    ax['E'].set_ylabel('change in brightness')
+    ax['E'].set_xlabel('time from onset')
+    # barplot version
+    # sns.barplot(merged[(merged.time>0)&(merged.time<.05)], x='contrastLeft', y='video')
+
+    ax['F'].scatter(np.arange(len(video_onsets))[onsets_not_nan], video_onsets[onsets_not_nan] - grating_onsets_shifted[onsets_not_nan], c='purple') 
+    ax['F'].set_xlim(0,len(video_onsets))
+    ax['F'].set_xlabel('trial')
+    ax['F'].set_ylabel('offset (video - psychopy) [s]')   
+
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
+    sns.despine(trim=True)
+    fig.savefig(os.path.join(folder_save, fig_name))
+
+    return fig_name
+
+def process_video(folder_path, subj):
     
     alf_path = os.path.join(folder_path, subj, 'alf')
     vid_filename = [x for x in os.listdir(alf_path) if '.mkv' in x][0]
@@ -669,22 +780,25 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     # crop video to just include mirror
-    attempt = 0
-    coords = []
-    while not coords and attempt < 10:
-        selected_idx = np.random.randint(total_frames)
-        print(f'attempt {attempt+1}, trying frame {selected_idx}')
-        cap.set(cv2.CAP_PROP_POS_FRAMES, selected_idx)
-        ret, frame = cap.read()
-        frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        coords = find_mirror(frame_bw)
-        attempt += 1
-    x, y, w, h = coords
+    if os.path.exists(os.path.join(alf_path, 'mirror_coords.npy')):
+        x, y, w, h = np.load(os.path.join(alf_path, 'mirror_coords.npy'))
+    else:
+        attempt = 0
+        coords = []
+        while not coords and attempt < 10:
+            selected_idx = np.random.randint(total_frames)
+            print(f'attempt {attempt+1}, trying frame {selected_idx}')
+            cap.set(cv2.CAP_PROP_POS_FRAMES, selected_idx)
+            ret, frame = cap.read()
+            frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            coords = find_mirror(frame_bw)
+            attempt += 1
+        x, y, w, h = coords
+        np.save(os.path.join(alf_path, 'mirror_coords'), coords)
 
     # compute and save max brightness of mirror for every frame
     if os.path.exists(os.path.join(alf_path, 'stim_brightness.npy')):
         stim_brightness = np.load(os.path.join(alf_path, 'stim_brightness.npy'))
-        t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
     else:  # 20 mins or so
         stim_brightness = np.empty((total_frames, 1))
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -696,18 +810,12 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
             frame_crop = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
             stim_brightness[i] = frame_crop.max()
         np.save(os.path.join(alf_path, 'stim_brightness'), stim_brightness)
+
+    if os.path.exists(os.path.join(alf_path, 'video_times.npy')):
+        t = np.load(os.path.join(alf_path, 'video_times.npy'))
+    else:
         t = np.arange(0, total_frames/vid_samplerate, step=1/vid_samplerate)
         np.save(os.path.join(alf_path, 'video_times'), t)
-
-    # run through video to make avg mirror plot - 30 seconds
-    video_array = np.empty((2000, h, w))
-    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-    print('getting avg frame for plot...')    
-    for i in range(2000):
-        ret, frame = cap.read()
-        if not ret:
-            break
-        video_array[i] = cv2.cvtColor(frame[y:y+h, x:x+w], cv2.COLOR_BGR2GRAY)
 
     cap.release()
 
@@ -732,82 +840,8 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     vid_onsets_secs[onsets_not_nan] = t[vid_onsets_samples]
     if np.any(~onsets_not_nan):
         vid_onsets_secs[~onsets_not_nan] = np.nan
-    # vid_onsets_secs = t[vid_onsets_samples]
     np.save(os.path.join(alf_path, 'video_onsets'), vid_onsets_secs)
 
-    # convert to mne for easy epoching
-    mne_info = mne.create_info(ch_names=['video', 'stim'], sfreq=vid_samplerate, ch_types=['eyegaze', 'stim'])
-    raw = mne.io.RawArray(np.hstack((stim_brightness,np.zeros_like(stim_brightness))).T, mne_info)
-    # onset_events = make_mne_events_array(np.rint(onsets_shifted*vid_samplerate), 1)
-    onset_events = make_mne_events_array(vid_onsets_samples, 1)
-    raw.add_events(onset_events, stim_channel='stim')
-    events = mne.find_events(raw, stim_channel='stim')  
-    onset_event_dict = {'onset':1}  
-    onset_epochs = mne.Epochs(raw, events=events, event_id=onset_event_dict, tmin=-.15, tmax=.15, baseline=(-.15,-.10), reject=None) 
-    onset_epochs_df = onset_epochs.to_data_frame()
-
-    # ================================= #
-    # make a snapshot figure
-    # ================================= #
-
-    sns.set_style('darkgrid')
-    fig, ax = plt.subplot_mosaic([['A','A', 'A'],['B','F', 'D'], ['B','F', 'E']], height_ratios=[0.3, 0.2, 0.2], layout='constrained', figsize=(12,8))
-    # fig, ax = plt.subplot_mosaic([['A', 'A'],['B', 'C'],['B', 'D'], ['B', 'E']], height_ratios=[0.3, 0.2, 0.2, 0.2], layout='constrained', figsize=(12,8))
-
-    # make avg image of first 5000 frames of mirror
-    ax['B'].imshow(np.mean(video_array, axis=0), cmap='gray')
-    ax['B'].grid(None)
-    ax['B'].set_title('selected mirror crop')
-    ax['B'].axis('off')
-
-    t_start = 10 # mins
-    t_dur = 1 # min
-    sample_start = int(t_start * 60 * vid_samplerate)
-    sample_dur = int(t_dur * 60 * vid_samplerate)
-    segment = stim_brightness[sample_start:sample_start+sample_dur]
-    segment_seconds = np.arange(t_start*60, (t_start+t_dur)*60, step=1/vid_samplerate)
-
-    ax['A'].plot(segment_seconds, segment)
-    ax['A'].set_title('max brightness snippet')
-    ax['A'].set_xlabel('time from session start (s)')
-    ax['A'].set_ylabel('mirror max brightness')
-    ax['A'].vlines(onsets_shifted, ymin=np.min(segment), ymax=np.max(segment), color='orange', linestyle='--', label='psychopy onset')
-    ax['A'].vlines(vid_onsets_secs, ymin=np.min(segment), ymax=np.max(segment), color='k', linestyle=':', label='video onset')
-    ax['A'].set_xlim(segment_seconds[0], segment_seconds[-1])
-    # ax['A'].xaxis.set_major_formatter(mdates.DateFormatter("%M:%S"))
-    ax['A'].margins(x=0)
-    ax['A'].legend()
-
-    # sns.lineplot(onset_epochs_df, x='time',y='video', color='k', ax=ax['C'])
-    # ax['C'].set_title(f'average of onsets, {len(vid_onsets_samples)} detected')
-    # ax['C'].set_ylabel('change in brightness')
-    # ax['C'].set_xlabel('time from onset')
-    
-    trials_reorg = trials_df.reset_index()
-    trials_reorg.index.name = 'epoch'
-    merged = onset_epochs_df.merge(trials_reorg, on='epoch')
-
-    sns.lineplot(merged, x='time',y='video', color='k', style='epoch', hue='contrastLeft', alpha=0.5, ax=ax['D'], palette='viridis', dashes='')
-    ax['D'].set_title(f'all onsets, {len(vid_onsets_samples)} detected')
-    ax['D'].set_ylabel('change in brightness')
-    ax['D'].set_xlabel('time from onset')
-    ax['D'].legend().remove()
-    
-    sns.lineplot(merged, x='time',y='video', color='k', hue='contrastLeft', alpha=0.5, ax=ax['E'], palette='viridis')
-    ax['E'].set_title('mean over left contrast')
-    ax['E'].set_ylabel('change in brightness')
-    ax['E'].set_xlabel('time from onset')
-    # barplot version
-    # sns.barplot(merged[(merged.time>0)&(merged.time<.05)], x='contrastLeft', y='video')
-
-    ax['F'].scatter(np.arange(len(vid_onsets_samples_nans))[onsets_not_nan], vid_onsets_secs[onsets_not_nan] - onsets_shifted[onsets_not_nan], c='purple') 
-    ax['F'].set_xlim(0,len(vid_onsets_samples_nans))
-    ax['F'].set_xlabel('trial')
-    ax['F'].set_ylabel('offset (video - psychopy) [s]')   
-
-    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-    sns.despine(trim=True)
-    fig.savefig(os.path.join(folder_save, fig_name))
 
 def detect_video_onsets(frame_data, psychopy_onsets, search_window_t=0.2, sampling_rate=60):
     psychopy_onsets_samples = psychopy_onsets * sampling_rate
@@ -823,89 +857,3 @@ def detect_video_onsets(frame_data, psychopy_onsets, search_window_t=0.2, sampli
         else: 
             onset_idx.append(np.nan)
     return np.array(onset_idx)
-
-def find_video_onsets(frame_data, threshold, minimum_gap):
-    impulse_inds = np.where(np.roll(frame_data,1)[1:]-frame_data[1:]>threshold)[0]
-    video_onsets = [impulse_inds[1]]
-    for i,x in enumerate(impulse_inds[2:]):
-        if x - impulse_inds[i] < minimum_gap:
-            continue
-        else:
-            video_onsets.append(x)
-    return np.array(video_onsets)
-
-
-if False: # some plotting stuff
-    # epoch around av onsets
-    # find contrast for frames where onsets should be happening
-    epoch_start = -0.15
-    epoch_end = 0.1
-    epoch_timepoints = np.arange(epoch_start, epoch_end, step=1/vid_samplerate)
-    contrast_epochs = np.empty(len(audio_onsets), len(epoch_timepoints))
-    for i,o in enumerate(onsets_shifted[:10]):
-        print(i)
-        contrast_epochs[i,:] = stim_brightness[int((o+epoch_start)*vid_samplerate):int((o+epoch_end)*vid_samplerate)]
-        # for j,t in enumerate(np.arange(o+epoch_start, o+epoch_end, step=1/vid_samplerate)):
-            # cap.set(cv2.CAP_PROP_POS_FRAMES, t*vid_samplerate)
-            # ret, frame = cap.read()
-            # f = mirror_crop.get_frame(t)
-            # contrast_epochs[i,j] = compute_max(f)
-    # baseline correct
-    baselines = np.mean(contrast_epochs[:,:4], axis=1)
-    epochs_bl = np.subtract(contrast_epochs, np.tile(baselines, (len(epoch_timepoints),1)).T)
-
-    plt.plot(epoch_timepoints, epochs_bl.T)
-
-
-
-    # Use ProcessPoolExecutor to parallelize the task
-    contrast_list = np.empty((total_frames, 1))
-    with ProcessPoolExecutor(max_workers=cpu_count()) as executor:
-        # Map each frame to the compute_contrast function
-        results = list(executor.map(compute_contrast, mirror_crop.iter_frames()))
-        # TODO: find progress bar that works
-
-    # Store the results into the contrast_list
-    for idx, result in enumerate(results):
-        contrast_list[idx] = result
-
-    contrast_list = np.empty((total_frames, 1))
-    f = np.empty((w,h))
-    for idx, f in enumerate(mirror_crop.iter_frames()):
-        # compute_contrast(f)
-        f_bw = f[:,:,0]
-        # compute min and max of Y
-        min = np.min(f_bw)
-        max = np.max(f_bw)
-        # compute contrast
-        contrast_list[idx] = (max-min)/(max+min)
-        if idx>500:
-            break
-    # ask chatCPT, Michael about turning video in np array
-    # video snapshot showing latency
-    # maybe an average of the mirror to make sure it's correct
-
-    for idx in range(total_frames): # is this faster?
-        f_bw = mirror_crop.get_frame(idx*1.0/clip.fps)[:,:,0]
-        # compute min and max of Y
-        min = np.min(f_bw)
-        max = np.max(f_bw)
-        # compute contrast
-        contrast_list[idx] = (max-min)/(max+min)
-        if idx>500:
-            break
-    edges = cv2.Canny(frame,100,200)
-    # Find contours
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    frame = clip_bw.get_frame(500*1.0/clip.fps)[:,:,0] # make sure this is bw
-
-
-
-
-    plt.subplot(121),plt.imshow(frame,cmap = 'gray')
-    plt.title('Original Image'), plt.xticks([]), plt.yticks([])
-    plt.subplot(122),plt.imshow(edges,cmap = 'gray')
-    plt.title('Edge Image'), plt.xticks([]), plt.yticks([])
-
-    plt.show()
