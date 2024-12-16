@@ -582,7 +582,7 @@ def process_audio(folder_path, subj, onset_freq = 5000):
 
     # check equal number of onsets and onsets within 150ms
     assert len(grating_onsets) == len(audio_onsets_selected), f'audio {len(audio_onsets_selected)} onsets, psychopy {len(grating_onsets)} onsets'
-    print(f'success: {len(grating_onsets)} onsets detected')
+    print(f'success: {len(grating_onsets)} audio onsets detected')
     if not np.isclose(audio_onsets_shifted, grating_onsets_shifted, atol=0.15).all():
         print('detected onsets not within 150ms of psychopy onsets')
     else:
@@ -841,6 +841,8 @@ def process_video(folder_path, subj):
     if np.any(~onsets_not_nan):
         vid_onsets_secs[~onsets_not_nan] = np.nan
     np.save(os.path.join(alf_path, 'video_onsets'), vid_onsets_secs)
+
+    print(f'success: {len(np.sum(onsets_not_nan))} video onsets detected')
 
 
 def detect_video_onsets(frame_data, psychopy_onsets, search_window_t=0.2, sampling_rate=60):
