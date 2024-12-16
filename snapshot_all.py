@@ -81,13 +81,12 @@ for subj in tqdm(subjects):
 
     try:
         utils.process_audio(folder_path, subj)
-    except:
-        continue
-
+    except Exception as e:
+        print("skipped subject with error", subj, e)
     try:
         utils.process_video(folder_path, subj)
-    except:
-        continue
+    except Exception as e:
+        print("skipped subject with error", subj, e)
    
 
 
