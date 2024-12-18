@@ -80,7 +80,7 @@ for subj in tqdm(subjects):
     # # extract pupil data
 
     try:
-        utils.process_audio(folder_path, subj)
+        utils.process_audio(folder_path, subj) # TODO: make this save imcomplete detections rather than erroring out
     except Exception as e:
         print("skipped subject with error", subj, e)
     try:

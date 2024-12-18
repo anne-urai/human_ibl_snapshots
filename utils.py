@@ -742,7 +742,7 @@ def plot_snapshot_video(folder_path, subj, folder_save, fig_name):
     merged = onset_epochs_df.merge(trials_reorg, on='epoch')
 
     sns.lineplot(merged, x='time',y='video', color='k', style='epoch', hue='contrastLeft', alpha=0.5, ax=ax['D'], palette='viridis', dashes='')
-    ax['D'].set_title(f'all onsets, {len(vid_onsets_samples)} detected')
+    ax['D'].set_title(f'all onsets, {len(np.sum(onsets_not_nan))} detected')
     ax['D'].set_ylabel('change in brightness')
     ax['D'].set_xlabel('time from onset')
     ax['D'].legend().remove()
