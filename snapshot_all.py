@@ -35,14 +35,12 @@ figures_folder = os.path.join(os.getcwd(), 'figures') # to save
 # loop over all subject folders
 subjects = sorted(os.listdir(folder_path))
 print(subjects)
-# subjects = subjects[0:10]
 
 #%% =============================== #
 # preprocess and extract
 # ================================= #
 
 for subj in tqdm(subjects):
-
     # make the folders necessary
     if not os.path.exists(os.path.join(folder_path, subj, 'raw_behavior_data')):
         for f in ['raw_behavior_data', 'raw_video_data', 'raw_eyelink_data', 'alf']:
@@ -62,11 +60,8 @@ for subj in tqdm(subjects):
             for f in file_names:
                 os.rename(os.path.join(folder_path, subj, f), os.path.join(folder_path, subj, 'raw_video_data', f))
 
-#%%
+#%% preprocess ALF behavior
 for subj in tqdm(subjects):
-
-    print(subj)
-
     try:
         # extract psychopy file into usable trials df and session df
         behavior_file_name = [s for s in os.listdir(os.path.join(folder_path, subj, 'raw_behavior_data')) if s.endswith('.csv') and not s.startswith('.')]
@@ -74,11 +69,12 @@ for subj in tqdm(subjects):
         trials_df, session_df = utils.convert_psychopy_one(data, behavior_file_name[0])
         trials_df.to_csv(os.path.join(folder_path, subj, 'alf', 'trials_table.csv'))
         session_df.to_csv(os.path.join(folder_path, subj, 'alf', 'session_info.csv'))
-    except:
+    except Exception as e:
+        print("skipped subject with error", subj, e)
         continue
 
-    # # extract pupil data
-
+#%% preprocess AUDIO AND VIDEO
+for subj in tqdm(subjects):
     try:
         utils.process_audio(folder_path, subj) # TODO: make this save imcomplete detections rather than erroring out
     except Exception as e:
@@ -89,41 +85,41 @@ for subj in tqdm(subjects):
         print("skipped subject with error", subj, e)
    
 
-
-
 #%% =============================== #
 # make snapshot figures
 # ================================= #
 
-#%%
 for subj in subjects:
 
-    # don't redo if the snapshots are there already
+    # # BEHAVIORAL DATA FROM PSYCHOPY CSV FILE
     if not os.path.exists(os.path.join(figures_folder, subj + '_behavior_snapshot.png')):
         try:
-            # # BEHAVIORAL DATA FROM PSYCHOPY CSV FILE
-            behavior_file_name = [s for s in os.listdir(os.path.join(folder_path, subj, 'alf')) if s.endswith('trials_df.csv') and not s.startswith('.')]
-            data = pd.read_csv(os.path.join(folder_path, subj, behavior_file_name[0]))
+            behavior_file_name = [s for s in os.listdir(os.path.join(folder_path, subj, 'alf')) if s.endswith('trials_table.csv') and not s.startswith('.')]
+            data = pd.read_csv(os.path.join(folder_path, subj, 'alf', behavior_file_name[0]))
             utils.plot_snapshot_behavior(data, figures_folder, subj + '_behavior_snapshot.png')
         except Exception as e:
-            print("skipped subject with error", subj, e)
+            print("skipped behavior snapshot, subject with error", subj, e)
     else:
         continue
 
+#%% PUPIL DATA
+for subj in subjects:
     if not os.path.exists(os.path.join(figures_folder, subj + '_pupil_snapshot.png')):
         try:
             # EYETRACKING DATA FROM EYELINK ASC FILE
-            pupil_file_name = [s for s in os.listdir(os.path.join(folder_path, subj)) if s.endswith('.asc')]
-            utils.plot_snapshot_pupil(os.path.join(folder_path, subj, pupil_file_name[0]),
+            pupil_file_name = [s for s in os.listdir(os.path.join(folder_path, subj, 'raw_eyelink_data')) if s.endswith('.asc')]
+            utils.plot_snapshot_pupil(os.path.join(folder_path, subj, 'raw_eyelink_data', pupil_file_name[0]),
                                     figures_folder, subj + '_pupil_snapshot.png')
         except Exception as e:
-            print("skipped subject with error", subj, e)
+            print("skipped pupil snapshot, subject with error", subj, e)
     else:
         continue
-
+#%%
+for subj in subjects:
     if not os.path.exists(os.path.join(figures_folder, subj + '_audio_snapshot.png')):
         try:
-            utils.plot_snapshot_audio(os.path.join(folder_path, subj), figures_folder, subj + '_audio_snapshot.png')
+            utils.plot_snapshot_audio(os.path.join(folder_path, subj), 
+                                      figures_folder, subj + '_audio_snapshot.png')
         
         except Exception as e:
             print("skipped subject with error", subj, e)
@@ -132,7 +128,8 @@ for subj in subjects:
 
     if not os.path.exists(os.path.join(figures_folder, subj + '_video_snapshot.png')):
         try:
-            utils.plot_snapshot_video(os.path.join(folder_path, subj), figures_folder, subj + '_video_snapshot.png')
+            utils.plot_snapshot_video(os.path.join(folder_path, subj), subj,
+                                      figures_folder, subj + '_video_snapshot.png')
         
         except Exception as e:
             print("skipped subject with error", subj, e)

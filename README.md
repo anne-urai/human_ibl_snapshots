@@ -9,6 +9,7 @@ Get yourself an environment with MNE
 - install [psychofit](https://pypi.org/project/Psychofit/) for psychometric function fitting, using `pip install psychofit`.
 - install `pip install audio-extract`
 - install `pip install moviepy`
+- install `pip install opencv-python`
 
 ### Run
 ```python

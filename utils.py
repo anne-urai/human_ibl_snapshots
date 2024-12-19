@@ -439,20 +439,20 @@ def trim_video(processed_path, vid_path, cutoff_start_s, cutoff_end_s):
         ffmpeg_extract_subclip(vid_path, cutoff_start_s, cutoff_end_s, targetname=short_vid_path)
     return short_vid_path
 
-def plot_snapshot_audio(folder_path, subj, folder_save, fig_name):
+def plot_snapshot_audio(folder_path, folder_save, fig_name):
     
-    alf_path = os.path.join(folder_path, subj, 'alf')
-    audio_filename = [x for x in os.listdir(alf_path) if '.wav' in x][0]
+    alf_path = os.path.join(folder_path, 'raw_video_data')
+    audio_filename = [x for x in os.listdir(folder_path) if '.wav' in x][0]
 
     # load audio, onsets, timepoints
-    samplerate, data = wavfile.read(os.path.join(alf_path, audio_filename))
+    samplerate, data = wavfile.read(os.path.join(folder_path, audio_filename))
     data_short = data.astype('float')[:,0]
     audio_onsets = np.load(os.path.join(alf_path, 'audio_onsets.npy'))
     audio_onsets_shifted = audio_onsets - audio_onsets[0]
     seconds = np.load(os.path.join(alf_path, 'audio_times.npy'))
 
     # load trials, get grating onsets
-    trials_df = load_trials(folder_path, subj)
+    trials_df = load_trials(folder_path, 'alf')
     grating_onsets = trials_df['sound_trial_start.started'].values
     grating_onsets_shifted = grating_onsets-grating_onsets[0]
 
