@@ -20,6 +20,8 @@ snapshot_pupil.py # generates pupil figures for all Eyelink .asc files in the _d
 
 ---
 
-Contact Anne Urai, Leiden University, 2024
+**Update**: see [this repo](https://github.com/cocosys-lab/2026-human-ibl-analyses) for data analyses, and a link to the preprint that should be cited.
+
+Contact Anne Urai, Leiden University, 2026
 a.e.urai@fsw.leidenuniv.nl
 
